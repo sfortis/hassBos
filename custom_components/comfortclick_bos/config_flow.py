@@ -7,7 +7,11 @@ from typing import Any
 
 import voluptuous as vol
 
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import (
+    SOURCE_RECONFIGURE,
+    ConfigFlow,
+    ConfigFlowResult,
+)
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
@@ -52,6 +56,7 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._creds: dict[str, Any] = {}
         self._discovered: list[dict] = []
+        self._preselected: list[str] | None = None
 
     async def _connect_and_discover(self, creds: dict[str, Any]) -> dict[str, str]:
         """Validate credentials and run discovery. Returns form errors (empty = ok)."""
@@ -89,22 +94,45 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="user", data_schema=_creds_schema(user_input or {}), errors=errors
         )
 
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Re-scan using the stored credentials (never re-asks for them)."""
+        entry = self._get_reconfigure_entry()
+        self._creds = {
+            CONF_BASE_URL: entry.data[CONF_BASE_URL],
+            CONF_USERNAME: entry.data[CONF_USERNAME],
+            CONF_PASSWORD: entry.data[CONF_PASSWORD],
+        }
+        errors = await self._connect_and_discover(self._creds)
+        if errors:
+            return self.async_abort(reason=errors["base"])
+        self._preselected = [
+            light[LIGHT_OBJECT] for light in entry.data.get(CONF_LIGHTS, [])
+        ]
+        return await self.async_step_select()
+
     async def async_step_select(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Step 2: choose which discovered lights to add."""
+        """Choose which discovered lights to add (or keep)."""
         options = {light[LIGHT_OBJECT]: _label(light) for light in self._discovered}
         if user_input is not None:
             chosen = set(user_input[CONF_LIGHTS])
             lights = [d for d in self._discovered if d[LIGHT_OBJECT] in chosen]
+            data = {**self._creds, CONF_LIGHTS: lights}
+            if self.source == SOURCE_RECONFIGURE:
+                return self.async_update_reload_and_abort(
+                    self._get_reconfigure_entry(), data=data
+                )
             return self.async_create_entry(
-                title=f"ComfortClick bOS ({len(lights)} lights)",
-                data={**self._creds, CONF_LIGHTS: lights},
+                title=f"ComfortClick bOS ({len(lights)} lights)", data=data
             )
+        default = self._preselected if self._preselected is not None else list(options)
         return self.async_show_form(
             step_id="select",
             data_schema=vol.Schema(
-                {vol.Required(CONF_LIGHTS, default=list(options)): cv.multi_select(options)}
+                {vol.Required(CONF_LIGHTS, default=default): cv.multi_select(options)}
             ),
             description_placeholders={"count": str(len(options))},
         )

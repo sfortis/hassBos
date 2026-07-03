@@ -25,7 +25,12 @@
       "unknown": "Unexpected error."
     },
     "abort": {
-      "already_configured": "This gateway is already configured."
+      "already_configured": "This gateway is already configured.",
+      "reconfigure_successful": "Re-scan saved.",
+      "invalid_auth": "Stored credentials were rejected. Remove and re-add the integration.",
+      "cannot_connect": "Failed to reach the gateway during re-scan.",
+      "no_lights": "No lights were discovered under Lights & Shading.",
+      "unknown": "Unexpected error during re-scan."
     }
   }
 }
