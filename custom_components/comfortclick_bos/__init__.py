@@ -11,13 +11,14 @@ from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .api import BosAuthError, BosClient, BosConnectionError
-from .const import CONF_BASE_URL
+from .const import CONF_BASE_URL, CONF_OBJECT_NAME, CONF_PANEL
+from .coordinator import BosCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [Platform.LIGHT]
 
-type BosConfigEntry = ConfigEntry[BosClient]
+type BosConfigEntry = ConfigEntry[BosCoordinator]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: BosConfigEntry) -> bool:
@@ -38,7 +39,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: BosConfigEntry) -> bool:
     except BosConnectionError as err:
         raise ConfigEntryNotReady(str(err)) from err
 
-    entry.runtime_data = client
+    coordinator = BosCoordinator(
+        hass,
+        client,
+        panel=entry.data.get(CONF_PANEL) or None,
+        objects=[entry.data[CONF_OBJECT_NAME]],
+    )
+    await coordinator.async_config_entry_first_refresh()
+
+    entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
 

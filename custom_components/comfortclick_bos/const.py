@@ -16,3 +16,8 @@ DEFAULT_BASE_URL = "https://gateway-eu2.comfortclick.com/"
 # The bOS DALI dim range observed on the gateway.
 BOS_MIN = 0
 BOS_MAX = 100
+
+# Seconds between GetClientData polls. The official web client polls ~1s; we
+# poll less aggressively. The server queues PropertyUpdates per session, so a
+# slower poll still receives every change (batched) on the next call.
+SCAN_INTERVAL = 5

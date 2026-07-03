@@ -1,21 +1,24 @@
 """Async client for the ComfortClick bOS cloud gateway HTTP/JSON API.
 
 Ported from the reverse-engineered PoC (bos_poc.py). The gateway rejects
-non-browser clients, so every request carries a browser User-Agent + Origin.
-The session (JWT `Token` cookie) is held by the aiohttp cookie jar; on an auth
-failure the client re-logs in once and retries, because cloud sessions expire.
+non-browser clients, so every request carries the exact browser User-Agent the
+official web client uses, plus an Origin header. The session (JWT `Token` cookie)
+is held by the aiohttp cookie jar and reused for every call: we log in ONCE and
+only re-authenticate if the session is later rejected (401/403). Live state is
+read the same way the web client does, by polling GetClientData.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 
 from aiohttp import ClientError, ClientSession
 
 _LOGGER = logging.getLogger(__name__)
 
-# Mirror the web client. The gateway drops connections whose requests do not
-# look browser-originated (non-browser UA / missing Origin).
+# Exact User-Agent sent by the official bOS web client (verified from HAR).
+# The gateway drops requests that do not look browser-originated.
 _BROWSER_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0"
@@ -33,7 +36,7 @@ class BosConnectionError(BosError):
 
 
 class BosAuthError(BosError):
-    """Raised when credentials are rejected by /Login."""
+    """Raised when the session is missing or rejected (login needed)."""
 
 
 class BosClient:
@@ -51,8 +54,8 @@ class BosClient:
         self._username = username
         self._password = password
         # Origin is the gateway host without the project path segment.
-        origin = self._base.split("/", 3)
-        self._origin = "/".join(origin[:3]) if len(origin) >= 3 else self._base
+        parts = self._base.split("/", 3)
+        self._origin = "/".join(parts[:3]) if len(parts) >= 3 else self._base
         self._headers = {
             "X-Requested-With": "XMLHttpRequest",
             "Content-Type": "application/json; charset=UTF-8",
@@ -72,51 +75,59 @@ class BosClient:
             "PushToken": "",
             "RememberMe": False,
         }
-        try:
-            async with self._session.post(
-                self._base + "/Login",
-                json=body,
-                headers=self._headers,
-                timeout=_TIMEOUT,
-            ) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
-        except ClientError as err:
-            raise BosConnectionError(str(err)) from err
+        data = await self._request("POST", "/Login", json=body)
         if data.get("Status") != "OK":
             raise BosAuthError(f"Login failed: {data.get('Status')!r}")
         _LOGGER.debug("bOS login OK for %s", self._username)
         return data
 
     async def set_value(self, object_name: str, value: str | int) -> dict:
-        """Write a value to an object, re-logging in once on auth failure."""
-        try:
-            return await self._set_value(object_name, value)
-        except BosAuthError:
-            _LOGGER.debug("bOS session rejected, re-logging in and retrying")
-            await self.login()
-            return await self._set_value(object_name, value)
-
-    async def _set_value(self, object_name: str, value: str | int) -> dict:
-        # value is sent as a STRING, exactly as the web client does (e.g. "50").
+        """Write a value to an object (value is sent as a STRING, e.g. "50")."""
         body = {
             "objectName": object_name,
             "valueName": "Value",
             "value": str(value),
         }
-        try:
-            async with self._session.post(
-                self._base + "/SetValue",
-                json=body,
-                headers=self._headers,
-                timeout=_TIMEOUT,
-            ) as resp:
-                if resp.status in (401, 403):
-                    raise BosAuthError(f"SetValue rejected: HTTP {resp.status}")
-                resp.raise_for_status()
-                data = await resp.json()
-        except ClientError as err:
-            raise BosConnectionError(str(err)) from err
+        data = await self._authed("POST", "/SetValue", json=body)
         if not data.get("Success"):
             raise BosError(f"SetValue failed: {data}")
         return data
+
+    async def get_client_data(self) -> list[dict]:
+        """Poll the live update channel, returning this session's PropertyUpdates.
+
+        Mirrors the web client: GET /GetClientData?_=<ms>. The gateway returns
+        only what changed since this session's previous poll (possibly empty).
+        Each item is {DeviceName, PropertyName:"Value", Value:<number>}.
+        """
+        params = {"_": str(int(time.time() * 1000))}
+        data = await self._authed("GET", "/GetClientData", params=params)
+        return data.get("PropertyUpdates", []) or []
+
+    async def get_panel(self, path: str) -> dict:
+        """Read a panel (used once at startup for an initial state snapshot)."""
+        return await self._authed("POST", "/GetPanel", json={"Path": path})
+
+    async def _authed(self, method: str, endpoint: str, **kwargs) -> dict:
+        """Run a request, re-logging in once if the session is rejected."""
+        try:
+            return await self._request(method, endpoint, **kwargs)
+        except BosAuthError:
+            _LOGGER.debug("bOS session rejected, re-logging in and retrying")
+            await self.login()
+            return await self._request(method, endpoint, **kwargs)
+
+    async def _request(self, method: str, endpoint: str, **kwargs) -> dict:
+        """Single HTTP call. Maps auth rejections and transport errors."""
+        kwargs.setdefault("headers", self._headers)
+        kwargs.setdefault("timeout", _TIMEOUT)
+        try:
+            async with self._session.request(
+                method, self._base + endpoint, **kwargs
+            ) as resp:
+                if resp.status in (401, 403):
+                    raise BosAuthError(f"{endpoint} rejected: HTTP {resp.status}")
+                resp.raise_for_status()
+                return await resp.json()
+        except ClientError as err:
+            raise BosConnectionError(str(err)) from err
