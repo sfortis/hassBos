@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 import time
 
-from aiohttp import ClientError, ClientSession
+from aiohttp import ClientError, ClientSession, ClientTimeout
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -24,7 +24,9 @@ _BROWSER_UA = (
     "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0"
 )
 
-_TIMEOUT = 15
+# Granular timeouts: a dead keep-alive connection fails fast on connect instead
+# of hanging until the total timeout, so a poll recovers on the next interval.
+_TIMEOUT = ClientTimeout(total=20, connect=8, sock_connect=8, sock_read=15)
 
 
 class BosError(Exception):
