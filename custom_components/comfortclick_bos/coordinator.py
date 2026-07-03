@@ -14,7 +14,7 @@ from datetime import timedelta
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from .api import BosClient, BosConnectionError, BosError
+from .api import BosClient, BosError
 from .const import DOMAIN, SCAN_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
@@ -68,7 +68,9 @@ class BosCoordinator(DataUpdateCoordinator[dict[str, int]]):
                     name = update.get("DeviceName")
                     if name:
                         self._values[name] = _to_int(update.get("Value"))
-        except BosConnectionError as err:
+        except BosError as err:
+            # Any transport/auth/protocol error -> transient failure; the
+            # coordinator keeps the last data and retries on the next interval.
             raise UpdateFailed(str(err)) from err
         return dict(self._values)
 

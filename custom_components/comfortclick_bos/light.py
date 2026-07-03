@@ -71,7 +71,10 @@ class ComfortClickLight(CoordinatorEntity[BosCoordinator], LightEntity):
 
     @property
     def available(self) -> bool:
-        return super().available and self._bos_value is not None
+        # Tied to coordinator health only. Before we have learned a value the
+        # entity is still available; is_on/brightness report None (unknown)
+        # until the first update or command arrives.
+        return super().available
 
     @property
     def is_on(self) -> bool | None:
