@@ -105,8 +105,12 @@ class BosClient:
         return data.get("PropertyUpdates", []) or []
 
     async def get_panel(self, path: str) -> dict:
-        """Read a panel (used once at startup for an initial state snapshot)."""
+        """Read a panel (initial state snapshot and discovery)."""
         return await self._authed("POST", "/GetPanel", json={"Path": path})
+
+    async def get_theme(self) -> dict:
+        """Read the theme, whose Host.Nodes is the navigation tree of panels."""
+        return await self._authed("GET", "/GetTheme")
 
     async def _authed(self, method: str, endpoint: str, **kwargs) -> dict:
         """Run a request, re-logging in once if the session is rejected."""

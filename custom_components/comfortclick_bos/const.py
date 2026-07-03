@@ -8,6 +8,23 @@ DOMAIN = "comfortclick_bos"
 CONF_BASE_URL = "base_url"
 CONF_OBJECT_NAME = "object_name"
 CONF_PANEL = "panel"
+CONF_LIGHTS = "lights"
+
+# Root navigation node to scan for lights.
+LIGHTS_ROOT = "Lights & Shading"
+
+# Discovered light kinds.
+KIND_DIMMER = "dimmer"
+KIND_SWITCH = "switch"
+
+# Keys inside each stored light dict.
+LIGHT_OBJECT = "object_name"
+LIGHT_NAME = "name"
+LIGHT_PANEL = "panel"
+LIGHT_PANEL_PATH = "panel_path"
+LIGHT_KIND = "kind"
+LIGHT_MIN = "min"
+LIGHT_MAX = "max"
 
 # Gateway host prefix only. The user appends their project (AccessID) and enters
 # the full base URL in the config flow, e.g. "<gateway>/<AccessID>".

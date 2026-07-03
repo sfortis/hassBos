@@ -1,4 +1,4 @@
-"""Config flow for the ComfortClick bOS integration."""
+"""Config flow for ComfortClick bOS: credentials, then discovery + selection."""
 
 from __future__ import annotations
 
@@ -8,111 +8,103 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
-from homeassistant.const import CONF_NAME, CONF_PASSWORD, CONF_USERNAME
+from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .api import BosAuthError, BosClient, BosConnectionError
 from .const import (
     CONF_BASE_URL,
-    CONF_OBJECT_NAME,
-    CONF_PANEL,
+    CONF_LIGHTS,
     DEFAULT_BASE_URL,
     DOMAIN,
+    LIGHT_KIND,
+    LIGHT_NAME,
+    LIGHT_OBJECT,
+    LIGHT_PANEL,
 )
+from .discovery import async_discover_lights
 
 _LOGGER = logging.getLogger(__name__)
 
 
-def _schema(defaults: dict[str, Any]) -> vol.Schema:
-    """Build the form schema, pre-filled with defaults (for reconfigure)."""
+def _creds_schema(defaults: dict[str, Any]) -> vol.Schema:
     return vol.Schema(
         {
             vol.Required(
                 CONF_BASE_URL, default=defaults.get(CONF_BASE_URL, DEFAULT_BASE_URL)
             ): str,
-            vol.Required(
-                CONF_USERNAME, default=defaults.get(CONF_USERNAME, "")
-            ): str,
+            vol.Required(CONF_USERNAME, default=defaults.get(CONF_USERNAME, "")): str,
             vol.Required(CONF_PASSWORD): str,
-            vol.Required(
-                CONF_OBJECT_NAME, default=defaults.get(CONF_OBJECT_NAME, "")
-            ): str,
-            vol.Optional(CONF_NAME, default=defaults.get(CONF_NAME, "")): str,
-            vol.Optional(CONF_PANEL, default=defaults.get(CONF_PANEL, "")): str,
         }
     )
 
 
+def _label(light: dict) -> str:
+    return f"[{light.get(LIGHT_PANEL, '')}] {light[LIGHT_NAME]} ({light[LIGHT_KIND]})"
+
+
 class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for ComfortClick bOS."""
+    """Handle the config flow."""
 
-    VERSION = 1
+    VERSION = 2
 
-    async def _validate(self, data: dict[str, Any]) -> None:
-        """Verify credentials by logging in. Raises on failure."""
+    def __init__(self) -> None:
+        self._creds: dict[str, Any] = {}
+        self._discovered: list[dict] = []
+
+    async def _connect_and_discover(self, creds: dict[str, Any]) -> dict[str, str]:
+        """Validate credentials and run discovery. Returns form errors (empty = ok)."""
         session = async_create_clientsession(self.hass)
         client = BosClient(
-            session,
-            data[CONF_BASE_URL],
-            data[CONF_USERNAME],
-            data[CONF_PASSWORD],
+            session, creds[CONF_BASE_URL], creds[CONF_USERNAME], creds[CONF_PASSWORD]
         )
-        await client.login()
-
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Handle the initial step."""
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            errors = await self._try(user_input)
-            if not errors:
-                await self.async_set_unique_id(
-                    f"{user_input[CONF_BASE_URL]}::{user_input[CONF_OBJECT_NAME]}"
-                )
-                self._abort_if_unique_id_configured()
-                return self.async_create_entry(
-                    title=self._title(user_input), data=user_input
-                )
-        return self.async_show_form(
-            step_id="user", data_schema=_schema(user_input or {}), errors=errors
-        )
-
-    async def async_step_reconfigure(
-        self, user_input: dict[str, Any] | None = None
-    ) -> ConfigFlowResult:
-        """Handle reconfiguration of server, credentials and object."""
-        entry = self._get_reconfigure_entry()
-        errors: dict[str, str] = {}
-        if user_input is not None:
-            errors = await self._try(user_input)
-            if not errors:
-                await self.async_set_unique_id(
-                    f"{user_input[CONF_BASE_URL]}::{user_input[CONF_OBJECT_NAME]}"
-                )
-                self._abort_if_unique_id_mismatch()
-                return self.async_update_reload_and_abort(
-                    entry, title=self._title(user_input), data=user_input
-                )
-        return self.async_show_form(
-            step_id="reconfigure",
-            data_schema=_schema(user_input or dict(entry.data)),
-            errors=errors,
-        )
-
-    async def _try(self, user_input: dict[str, Any]) -> dict[str, str]:
-        """Run validation, mapping exceptions to form errors."""
         try:
-            await self._validate(user_input)
+            await client.login()
+            self._discovered = await async_discover_lights(client)
         except BosAuthError:
             return {"base": "invalid_auth"}
         except BosConnectionError:
             return {"base": "cannot_connect"}
         except Exception:  # noqa: BLE001
-            _LOGGER.exception("Unexpected error validating bOS connection")
+            _LOGGER.exception("Unexpected error during discovery")
             return {"base": "unknown"}
+        if not self._discovered:
+            return {"base": "no_lights"}
         return {}
 
-    @staticmethod
-    def _title(user_input: dict[str, Any]) -> str:
-        return user_input.get(CONF_NAME) or user_input[CONF_OBJECT_NAME].split("\\")[-1]
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step 1: credentials, then connect and discover."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            await self.async_set_unique_id(user_input[CONF_BASE_URL])
+            self._abort_if_unique_id_configured()
+            errors = await self._connect_and_discover(user_input)
+            if not errors:
+                self._creds = user_input
+                return await self.async_step_select()
+        return self.async_show_form(
+            step_id="user", data_schema=_creds_schema(user_input or {}), errors=errors
+        )
+
+    async def async_step_select(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Step 2: choose which discovered lights to add."""
+        options = {light[LIGHT_OBJECT]: _label(light) for light in self._discovered}
+        if user_input is not None:
+            chosen = set(user_input[CONF_LIGHTS])
+            lights = [d for d in self._discovered if d[LIGHT_OBJECT] in chosen]
+            return self.async_create_entry(
+                title=f"ComfortClick bOS ({len(lights)} lights)",
+                data={**self._creds, CONF_LIGHTS: lights},
+            )
+        return self.async_show_form(
+            step_id="select",
+            data_schema=vol.Schema(
+                {vol.Required(CONF_LIGHTS, default=list(options)): cv.multi_select(options)}
+            ),
+            description_placeholders={"count": str(len(options))},
+        )

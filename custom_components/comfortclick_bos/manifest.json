@@ -1,12 +1,14 @@
 {
   "domain": "comfortclick_bos",
   "name": "ComfortClick bOS",
-  "codeowners": ["@sfortis"],
+  "codeowners": [
+    "@sfortis"
+  ],
   "config_flow": true,
   "documentation": "https://github.com/sfortis/hassBos",
   "issue_tracker": "https://github.com/sfortis/hassBos/issues",
   "iot_class": "cloud_polling",
   "integration_type": "device",
   "requirements": [],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }
