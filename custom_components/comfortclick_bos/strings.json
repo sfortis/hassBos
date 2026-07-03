@@ -1,0 +1,40 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to ComfortClick bOS",
+        "description": "Enter your bOS gateway URL, credentials and the object path of the light to control.",
+        "data": {
+          "base_url": "Gateway base URL",
+          "username": "Username",
+          "password": "Password",
+          "object_name": "Light object path",
+          "name": "Light name (optional)",
+          "panel": "Panel path (optional, for future read-back)"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure ComfortClick bOS",
+        "description": "Update the gateway URL, credentials or object path.",
+        "data": {
+          "base_url": "Gateway base URL",
+          "username": "Username",
+          "password": "Password",
+          "object_name": "Light object path",
+          "name": "Light name (optional)",
+          "panel": "Panel path (optional, for future read-back)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to reach the gateway. Check the base URL and network.",
+      "invalid_auth": "Invalid username or password.",
+      "unknown": "Unexpected error."
+    },
+    "abort": {
+      "already_configured": "This light is already configured.",
+      "reconfigure_successful": "Reconfiguration saved.",
+      "unique_id_mismatch": "The gateway URL or object path does not match this entry."
+    }
+  }
+}

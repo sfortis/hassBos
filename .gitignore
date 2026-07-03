@@ -1,0 +1,16 @@
+# Never commit credentials or captured traffic
+secrets.yaml
+secrets.yml
+*.har
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
