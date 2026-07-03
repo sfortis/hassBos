@@ -133,5 +133,8 @@ class BosClient:
                     raise BosAuthError(f"{endpoint} rejected: HTTP {resp.status}")
                 resp.raise_for_status()
                 return await resp.json()
-        except ClientError as err:
+        except (ClientError, TimeoutError, OSError) as err:
+            # ClientError covers HTTP/protocol issues; TimeoutError is a connect
+            # or total timeout (not a ClientError subclass); OSError covers
+            # DNS/socket failures. All are transient connectivity problems.
             raise BosConnectionError(str(err)) from err
