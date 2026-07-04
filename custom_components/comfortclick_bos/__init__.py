@@ -33,6 +33,11 @@ def _device_id(base: str, panel: str | None) -> tuple[str, str]:
     return (DOMAIN, f"{base}::{panel or 'bOS'}")
 
 
+def entities_from_entry(entry: ConfigEntry) -> list[dict]:
+    """Configured entity descriptors, with fallback to the old 'lights' key."""
+    return entry.data.get(CONF_ENTITIES) or entry.data.get("lights") or []
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: BosConfigEntry) -> bool:
     """Set up ComfortClick bOS from a config entry."""
     # A dedicated session gives us an isolated cookie jar for the JWT Token.
@@ -53,7 +58,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: BosConfigEntry) -> bool:
 
     panel_paths = {
         item[ENT_PANEL_PATH]
-        for item in entry.data.get(CONF_ENTITIES, [])
+        for item in entities_from_entry(entry)
         if item.get(ENT_PANEL_PATH)
     }
     coordinator = BosCoordinator(hass, client, panel_paths)
@@ -77,7 +82,7 @@ async def async_remove_config_entry_device(
     base = config_entry.unique_id or config_entry.entry_id
     active = {
         _device_id(base, item.get(ENT_PANEL))
-        for item in config_entry.data.get(CONF_ENTITIES, [])
+        for item in entities_from_entry(config_entry)
     }
     return not (device_entry.identifiers & active)
 
@@ -86,7 +91,7 @@ async def async_remove_config_entry_device(
 def _cleanup_stale(hass: HomeAssistant, entry: BosConfigEntry) -> None:
     """Drop entities/devices left over from a previous configuration."""
     base = entry.unique_id or entry.entry_id
-    items = entry.data.get(CONF_ENTITIES, [])
+    items = entities_from_entry(entry)
     current_uids = {f"{base}::{item[ENT_OBJECT]}" for item in items}
     current_devices = {_device_id(base, item.get(ENT_PANEL)) for item in items}
 

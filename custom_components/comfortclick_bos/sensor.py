@@ -10,9 +10,8 @@ from homeassistant.components.sensor import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import BosConfigEntry
+from . import BosConfigEntry, entities_from_entry
 from .const import (
-    CONF_ENTITIES,
     ENT_DEVICE_CLASS,
     ENT_KIND,
     ENT_STATE_CLASS,
@@ -31,7 +30,7 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     async_add_entities(
         BosSensor(coordinator, entry, item)
-        for item in entry.data.get(CONF_ENTITIES, [])
+        for item in entities_from_entry(entry)
         if item.get(ENT_KIND) == KIND_SENSOR
     )
 

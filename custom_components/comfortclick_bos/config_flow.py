@@ -191,7 +191,8 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
         if errors:
             return self.async_abort(reason=errors["base"])
         discovered_objs = {item[ENT_OBJECT] for item in self._discovered}
-        for item in entry.data.get(CONF_ENTITIES, []):
+        existing = entry.data.get(CONF_ENTITIES) or entry.data.get("lights") or []
+        for item in existing:
             if item[ENT_OBJECT] in discovered_objs:
                 self._selected[item[ENT_OBJECT]] = item
         return await self.async_step_floor()
