@@ -3,16 +3,23 @@
     "step": {
       "user": {
         "title": "Connect to ComfortClick bOS",
-        "description": "Enter your bOS gateway URL and credentials. The next step discovers the lights.",
+        "description": "Enter your bOS gateway URL and credentials. The next steps discover and select the lights.",
         "data": {
           "base_url": "Gateway base URL",
           "username": "Username",
           "password": "Password"
         }
       },
-      "select": {
-        "title": "Select lights",
-        "description": "Discovered {count} lights under Lights & Shading. Choose which to add.",
+      "floor": {
+        "title": "Choose a floor",
+        "description": "Pick a floor to select its lights, then repeat for other floors. {total} lights selected so far. Choose Finish when done.",
+        "data": {
+          "floor": "Floor"
+        }
+      },
+      "lights": {
+        "title": "Lights on {floor}",
+        "description": "Select the lights to add on {floor}.",
         "data": {
           "lights": "Lights"
         }
@@ -26,7 +33,7 @@
     },
     "abort": {
       "already_configured": "This gateway is already configured.",
-      "reconfigure_successful": "Re-scan saved.",
+      "reconfigure_successful": "Selection saved.",
       "invalid_auth": "Stored credentials were rejected. Remove and re-add the integration.",
       "cannot_connect": "Failed to reach the gateway during re-scan.",
       "no_lights": "No lights were discovered under Lights & Shading.",

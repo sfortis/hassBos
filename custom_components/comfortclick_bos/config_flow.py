@@ -1,4 +1,8 @@
-"""Config flow for ComfortClick bOS: credentials, then discovery + selection."""
+"""Config flow for ComfortClick bOS: credentials, then per-floor light selection.
+
+After connecting and discovering, the user picks lights one floor (panel) at a
+time from a dropdown, then finishes. Selections accumulate across floors.
+"""
 
 from __future__ import annotations
 
@@ -15,6 +19,12 @@ from homeassistant.config_entries import (
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
+from homeassistant.helpers.selector import (
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+)
 
 from .api import BosAuthError, BosClient, BosConnectionError
 from .const import (
@@ -31,6 +41,9 @@ from .discovery import async_discover_lights
 
 _LOGGER = logging.getLogger(__name__)
 
+_FINISH = "__finish__"
+_CONF_FLOOR = "floor"
+
 
 def _creds_schema(defaults: dict[str, Any]) -> vol.Schema:
     return vol.Schema(
@@ -44,10 +57,6 @@ def _creds_schema(defaults: dict[str, Any]) -> vol.Schema:
     )
 
 
-def _label(light: dict) -> str:
-    return f"[{light.get(LIGHT_PANEL, '')}] {light[LIGHT_NAME]} ({light[LIGHT_KIND]})"
-
-
 class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the config flow."""
 
@@ -56,7 +65,9 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._creds: dict[str, Any] = {}
         self._discovered: list[dict] = []
-        self._preselected: list[str] | None = None
+        self._by_panel: dict[str, list[dict]] = {}
+        self._selected: dict[str, dict] = {}
+        self._panel: str = ""
 
     async def _connect_and_discover(self, creds: dict[str, Any]) -> dict[str, str]:
         """Validate credentials and run discovery. Returns form errors (empty = ok)."""
@@ -76,6 +87,9 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
             return {"base": "unknown"}
         if not self._discovered:
             return {"base": "no_lights"}
+        self._by_panel = {}
+        for light in self._discovered:
+            self._by_panel.setdefault(light[LIGHT_PANEL], []).append(light)
         return {}
 
     async def async_step_user(
@@ -89,7 +103,7 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
             errors = await self._connect_and_discover(user_input)
             if not errors:
                 self._creds = user_input
-                return await self.async_step_select()
+                return await self.async_step_floor()
         return self.async_show_form(
             step_id="user", data_schema=_creds_schema(user_input or {}), errors=errors
         )
@@ -107,32 +121,91 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
         errors = await self._connect_and_discover(self._creds)
         if errors:
             return self.async_abort(reason=errors["base"])
-        self._preselected = [
-            light[LIGHT_OBJECT] for light in entry.data.get(CONF_LIGHTS, [])
-        ]
-        return await self.async_step_select()
+        # Pre-select the currently configured lights that still exist.
+        discovered_objs = {light[LIGHT_OBJECT] for light in self._discovered}
+        for light in entry.data.get(CONF_LIGHTS, []):
+            if light[LIGHT_OBJECT] in discovered_objs:
+                self._selected[light[LIGHT_OBJECT]] = light
+        return await self.async_step_floor()
 
-    async def async_step_select(
+    async def async_step_floor(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Choose which discovered lights to add (or keep)."""
-        options = {light[LIGHT_OBJECT]: _label(light) for light in self._discovered}
+        """Pick a floor to edit, or finish."""
+        if user_input is not None:
+            if user_input[_CONF_FLOOR] == _FINISH:
+                return self._finish()
+            self._panel = user_input[_CONF_FLOOR]
+            return await self.async_step_lights()
+
+        options = [
+            SelectOptionDict(
+                value=panel,
+                label=f"{panel} ({self._selected_count(panel)}/{len(lights)} selected)",
+            )
+            for panel, lights in self._by_panel.items()
+        ]
+        options.append(SelectOptionDict(value=_FINISH, label="Finish adding lights"))
+        return self.async_show_form(
+            step_id="floor",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(_CONF_FLOOR): SelectSelector(
+                        SelectSelectorConfig(
+                            options=options, mode=SelectSelectorMode.LIST
+                        )
+                    )
+                }
+            ),
+            description_placeholders={"total": str(len(self._selected))},
+        )
+
+    async def async_step_lights(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Multi-select the lights on the currently chosen floor."""
+        panel_lights = self._by_panel[self._panel]
+        options = {
+            light[LIGHT_OBJECT]: f"{light[LIGHT_NAME]} ({light[LIGHT_KIND]})"
+            for light in panel_lights
+        }
         if user_input is not None:
             chosen = set(user_input[CONF_LIGHTS])
-            lights = [d for d in self._discovered if d[LIGHT_OBJECT] in chosen]
-            data = {**self._creds, CONF_LIGHTS: lights}
-            if self.source == SOURCE_RECONFIGURE:
-                return self.async_update_reload_and_abort(
-                    self._get_reconfigure_entry(), data=data
-                )
-            return self.async_create_entry(
-                title=f"ComfortClick bOS ({len(lights)} lights)", data=data
-            )
-        default = self._preselected if self._preselected is not None else list(options)
+            for light in panel_lights:
+                obj = light[LIGHT_OBJECT]
+                if obj in chosen:
+                    self._selected[obj] = light
+                else:
+                    self._selected.pop(obj, None)
+            return await self.async_step_floor()
+
+        default = [
+            light[LIGHT_OBJECT]
+            for light in panel_lights
+            if light[LIGHT_OBJECT] in self._selected
+        ]
         return self.async_show_form(
-            step_id="select",
+            step_id="lights",
             data_schema=vol.Schema(
-                {vol.Required(CONF_LIGHTS, default=default): cv.multi_select(options)}
+                {vol.Optional(CONF_LIGHTS, default=default): cv.multi_select(options)}
             ),
-            description_placeholders={"count": str(len(options))},
+            description_placeholders={"floor": self._panel},
+        )
+
+    def _selected_count(self, panel: str) -> int:
+        return sum(
+            1
+            for light in self._by_panel[panel]
+            if light[LIGHT_OBJECT] in self._selected
+        )
+
+    def _finish(self) -> ConfigFlowResult:
+        lights = list(self._selected.values())
+        data = {**self._creds, CONF_LIGHTS: lights}
+        if self.source == SOURCE_RECONFIGURE:
+            return self.async_update_reload_and_abort(
+                self._get_reconfigure_entry(), data=data
+            )
+        return self.async_create_entry(
+            title=f"ComfortClick bOS ({len(lights)} lights)", data=data
         )
