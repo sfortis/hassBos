@@ -51,7 +51,7 @@
     "error": {
       "cannot_connect": "Failed to reach the gateway. Check the base URL and network.",
       "invalid_auth": "Invalid username or password.",
-      "no_lights": "No lights were discovered under Lights & Shading.",
+      "no_lights": "No lights were discovered.",
       "unknown": "Unexpected error."
     },
     "abort": {
@@ -60,7 +60,7 @@
       "reconfigure_successful": "Selection saved.",
       "invalid_auth": "Stored credentials were rejected. Remove and re-add the integration.",
       "cannot_connect": "Failed to reach the gateway during re-scan.",
-      "no_lights": "No lights were discovered under Lights & Shading.",
+      "no_lights": "No lights were discovered.",
       "unknown": "Unexpected error during re-scan."
     }
   }

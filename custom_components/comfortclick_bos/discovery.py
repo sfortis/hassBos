@@ -25,23 +25,11 @@ from .const import (
     LIGHT_OBJECT,
     LIGHT_PANEL,
     LIGHT_PANEL_PATH,
-    LIGHTS_ROOT,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
 _THEMES_PREFIX = "Themes\\"
-
-
-def _find_node(node: dict, text: str) -> dict | None:
-    """Depth-first search for the navigation node whose Text matches."""
-    if node.get("Text") == text:
-        return node
-    for child in node.get("Nodes", []) or []:
-        found = _find_node(child, text)
-        if found:
-            return found
-    return None
 
 
 def _iter_controls(controls: list | None):
@@ -82,17 +70,22 @@ def _is_switch(control: dict) -> bool:
 
 
 async def async_discover_lights(client: BosClient) -> list[dict]:
-    """Return the list of light descriptors under the Lights & Shading subtree."""
+    """Return light descriptors from the whole navigation tree.
+
+    Scans every panel from the root, not a fixed subtree: the navigation layout
+    is project-specific (some installs use "Lights & Shading", others "Rooms",
+    etc.), so a whole-tree scan finds lights wherever they live. Panels with no
+    lights simply contribute nothing.
+    """
     theme = await client.get_theme()
     host = theme.get("Host", {}) or {}
-    root = _find_node(host, LIGHTS_ROOT)
-    if not root:
-        _LOGGER.warning("Navigation node %r not found; cannot discover", LIGHTS_ROOT)
+    if not host:
+        _LOGGER.warning("GetTheme returned no navigation host; cannot discover")
         return []
 
     lights: dict[str, dict] = {}
     seen_panels: set[str] = set()
-    await _walk(client, root, lights, seen_panels)
+    await _walk(client, host, lights, seen_panels)
     _LOGGER.debug("Discovered %d lights across %d panels", len(lights), len(seen_panels))
     return list(lights.values())
 
