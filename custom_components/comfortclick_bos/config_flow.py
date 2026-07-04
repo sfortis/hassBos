@@ -1,8 +1,8 @@
 """Config flow for ComfortClick bOS.
 
-- user:        credentials -> discover -> per-floor light selection -> create
+- user:        credentials -> discover -> per-floor entity selection -> create
 - reauth:      re-enter only the password when the session is rejected
-- reconfigure: menu -> change credentials, or re-scan and re-select lights
+- reconfigure: menu -> change credentials, or re-scan and re-select entities
 """
 
 from __future__ import annotations
@@ -30,15 +30,15 @@ from homeassistant.helpers.selector import (
 from .api import BosAuthError, BosClient, BosConnectionError
 from .const import (
     CONF_BASE_URL,
-    CONF_LIGHTS,
+    CONF_ENTITIES,
     DEFAULT_BASE_URL,
     DOMAIN,
-    LIGHT_KIND,
-    LIGHT_NAME,
-    LIGHT_OBJECT,
-    LIGHT_PANEL,
+    ENT_KIND,
+    ENT_NAME,
+    ENT_OBJECT,
+    ENT_PANEL,
 )
-from .discovery import async_discover_lights
+from .discovery import async_discover_entities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -88,14 +88,14 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
         return {}
 
     async def _discover(self, creds: dict[str, Any]) -> dict[str, str]:
-        """Login and discover lights, grouping by panel. Returns form errors."""
+        """Login and discover entities, grouping by panel. Returns form errors."""
         session = async_create_clientsession(self.hass)
         client = BosClient(
             session, creds[CONF_BASE_URL], creds[CONF_USERNAME], creds[CONF_PASSWORD]
         )
         try:
             await client.login()
-            self._discovered = await async_discover_lights(client)
+            self._discovered = await async_discover_entities(client)
         except BosAuthError:
             return {"base": "invalid_auth"}
         except BosConnectionError:
@@ -106,8 +106,8 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
         if not self._discovered:
             return {"base": "no_lights"}
         self._by_panel = {}
-        for light in self._discovered:
-            self._by_panel.setdefault(light[LIGHT_PANEL], []).append(light)
+        for item in self._discovered:
+            self._by_panel.setdefault(item[ENT_PANEL], []).append(item)
         return {}
 
     async def async_step_user(
@@ -153,10 +153,10 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Choose whether to change credentials or re-scan lights."""
+        """Choose whether to change credentials or re-scan entities."""
         return self.async_show_menu(
             step_id="reconfigure",
-            menu_options=["reconfigure_credentials", "reconfigure_lights"],
+            menu_options=["reconfigure_credentials", "reconfigure_entities"],
         )
 
     async def async_step_reconfigure_credentials(
@@ -177,10 +177,10 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
             errors=errors,
         )
 
-    async def async_step_reconfigure_lights(
+    async def async_step_reconfigure_entities(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Re-scan with the stored credentials and re-select lights."""
+        """Re-scan with the stored credentials and re-select entities."""
         entry = self._get_reconfigure_entry()
         self._creds = {
             CONF_BASE_URL: entry.data[CONF_BASE_URL],
@@ -190,10 +190,10 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
         errors = await self._discover(self._creds)
         if errors:
             return self.async_abort(reason=errors["base"])
-        discovered_objs = {light[LIGHT_OBJECT] for light in self._discovered}
-        for light in entry.data.get(CONF_LIGHTS, []):
-            if light[LIGHT_OBJECT] in discovered_objs:
-                self._selected[light[LIGHT_OBJECT]] = light
+        discovered_objs = {item[ENT_OBJECT] for item in self._discovered}
+        for item in entry.data.get(CONF_ENTITIES, []):
+            if item[ENT_OBJECT] in discovered_objs:
+                self._selected[item[ENT_OBJECT]] = item
         return await self.async_step_floor()
 
     async def async_step_floor(
@@ -204,16 +204,16 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
             if user_input[_CONF_FLOOR] == _FINISH:
                 return self._finish()
             self._panel = user_input[_CONF_FLOOR]
-            return await self.async_step_lights()
+            return await self.async_step_items()
 
         options = [
             SelectOptionDict(
                 value=panel,
-                label=f"{panel} ({self._selected_count(panel)}/{len(lights)} selected)",
+                label=f"{panel} ({self._selected_count(panel)}/{len(items)} selected)",
             )
-            for panel, lights in self._by_panel.items()
+            for panel, items in self._by_panel.items()
         ]
-        options.append(SelectOptionDict(value=_FINISH, label="Finish adding lights"))
+        options.append(SelectOptionDict(value=_FINISH, label="Finish"))
         return self.async_show_form(
             step_id="floor",
             data_schema=vol.Schema(
@@ -228,52 +228,50 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
             description_placeholders={"total": str(len(self._selected))},
         )
 
-    async def async_step_lights(
+    async def async_step_items(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Multi-select the lights on the currently chosen floor."""
-        panel_lights = self._by_panel[self._panel]
+        """Multi-select the entities on the currently chosen floor."""
+        panel_items = self._by_panel[self._panel]
         options = {
-            light[LIGHT_OBJECT]: f"{light[LIGHT_NAME]} ({light[LIGHT_KIND]})"
-            for light in panel_lights
+            item[ENT_OBJECT]: f"{item[ENT_NAME]} ({item[ENT_KIND]})"
+            for item in panel_items
         }
         if user_input is not None:
-            chosen = set(user_input[CONF_LIGHTS])
-            for light in panel_lights:
-                obj = light[LIGHT_OBJECT]
+            chosen = set(user_input[CONF_ENTITIES])
+            for item in panel_items:
+                obj = item[ENT_OBJECT]
                 if obj in chosen:
-                    self._selected[obj] = light
+                    self._selected[obj] = item
                 else:
                     self._selected.pop(obj, None)
             return await self.async_step_floor()
 
         default = [
-            light[LIGHT_OBJECT]
-            for light in panel_lights
-            if light[LIGHT_OBJECT] in self._selected
+            item[ENT_OBJECT]
+            for item in panel_items
+            if item[ENT_OBJECT] in self._selected
         ]
         return self.async_show_form(
-            step_id="lights",
+            step_id="items",
             data_schema=vol.Schema(
-                {vol.Optional(CONF_LIGHTS, default=default): cv.multi_select(options)}
+                {vol.Optional(CONF_ENTITIES, default=default): cv.multi_select(options)}
             ),
             description_placeholders={"floor": self._panel},
         )
 
     def _selected_count(self, panel: str) -> int:
         return sum(
-            1
-            for light in self._by_panel[panel]
-            if light[LIGHT_OBJECT] in self._selected
+            1 for item in self._by_panel[panel] if item[ENT_OBJECT] in self._selected
         )
 
     def _finish(self) -> ConfigFlowResult:
-        lights = list(self._selected.values())
-        data = {**self._creds, CONF_LIGHTS: lights}
+        items = list(self._selected.values())
+        data = {**self._creds, CONF_ENTITIES: items}
         if self.source == SOURCE_RECONFIGURE:
             return self.async_update_reload_and_abort(
                 self._get_reconfigure_entry(), data=data
             )
         return self.async_create_entry(
-            title=f"ComfortClick bOS ({len(lights)} lights)", data=data
+            title=f"ComfortClick bOS ({len(items)} entities)", data=data
         )

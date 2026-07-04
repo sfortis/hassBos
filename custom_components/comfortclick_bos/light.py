@@ -1,9 +1,4 @@
-"""Light platform for ComfortClick bOS.
-
-Creates one entity per discovered light. Dimmers expose brightness (scaled to
-each control's own min/max); on/off lights expose plain on/off. State is read
-live from the coordinator (GetClientData polling), so external changes show up.
-"""
+"""Light platform for ComfortClick bOS (dimmer + on/off)."""
 
 from __future__ import annotations
 
@@ -13,23 +8,21 @@ from typing import Any
 from homeassistant.components.light import ATTR_BRIGHTNESS, ColorMode, LightEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import BosConfigEntry
 from .api import BosError
 from .const import (
-    DOMAIN,
+    BOS_MAX,
+    BOS_MIN,
+    CONF_ENTITIES,
+    ENT_KIND,
+    ENT_MAX,
+    ENT_MIN,
     KIND_DIMMER,
-    LIGHT_KIND,
-    LIGHT_MAX,
-    LIGHT_MIN,
-    LIGHT_NAME,
-    LIGHT_OBJECT,
-    LIGHT_PANEL,
+    KIND_SWITCH,
 )
-from .coordinator import BosCoordinator
+from .entity import BosEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -58,47 +51,19 @@ async def async_setup_entry(
     entry: BosConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up bOS lights from the discovered, user-selected list."""
+    """Set up the light entities (dimmer + on/off) from the config entry."""
     coordinator = entry.runtime_data
-    entities: list[BosBaseLight] = []
-    for light in entry.data.get("lights", []):
-        if light.get(LIGHT_KIND) == KIND_DIMMER:
-            entities.append(BosDimmerLight(coordinator, entry, light))
-        else:
-            entities.append(BosSwitchLight(coordinator, entry, light))
+    entities: list[BosEntity] = []
+    for item in entry.data.get(CONF_ENTITIES, []):
+        if item.get(ENT_KIND) == KIND_DIMMER:
+            entities.append(BosDimmerLight(coordinator, entry, item))
+        elif item.get(ENT_KIND) == KIND_SWITCH:
+            entities.append(BosSwitchLight(coordinator, entry, item))
     async_add_entities(entities)
 
 
-class BosBaseLight(CoordinatorEntity[BosCoordinator], LightEntity):
-    """Shared wiring for a single bOS light object."""
-
-    _attr_has_entity_name = False
-
-    def __init__(
-        self,
-        coordinator: BosCoordinator,
-        entry: BosConfigEntry,
-        light: dict,
-    ) -> None:
-        super().__init__(coordinator)
-        self._object = light[LIGHT_OBJECT]
-        self._attr_name = light[LIGHT_NAME]
-        base = entry.unique_id or entry.entry_id
-        self._attr_unique_id = f"{base}::{self._object}"
-        # Group by floor/panel (e.g. "3rd Floor", "Common Areas") as the device -
-        # more intuitive here than the physical bOS controller.
-        panel = light.get(LIGHT_PANEL) or "bOS"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{base}::{panel}")},
-            name=panel,
-            manufacturer="ComfortClick",
-            model="bOS",
-            suggested_area=panel,
-        )
-
-    @property
-    def _raw(self) -> object:
-        return self.coordinator.data.get(self._object)
+class _BosLightBase(BosEntity, LightEntity):
+    """Shared write path for bOS lights."""
 
     async def _set(self, value: object) -> None:
         try:
@@ -108,16 +73,16 @@ class BosBaseLight(CoordinatorEntity[BosCoordinator], LightEntity):
         self.coordinator.set_local(self._object, value)
 
 
-class BosDimmerLight(BosBaseLight):
+class BosDimmerLight(_BosLightBase):
     """A dimmable bOS light (0..max, mapped to HA brightness 0..255)."""
 
     _attr_color_mode = ColorMode.BRIGHTNESS
     _attr_supported_color_modes = {ColorMode.BRIGHTNESS}
 
-    def __init__(self, coordinator, entry, light) -> None:
-        super().__init__(coordinator, entry, light)
-        self._min = light.get(LIGHT_MIN) or 0
-        self._max = light.get(LIGHT_MAX) or 100
+    def __init__(self, coordinator, entry, item) -> None:
+        super().__init__(coordinator, entry, item)
+        self._min = item.get(ENT_MIN) or BOS_MIN
+        self._max = item.get(ENT_MAX) or BOS_MAX
         self._last_brightness = HA_MAX
 
     @property
@@ -135,9 +100,8 @@ class BosDimmerLight(BosBaseLight):
     async def async_turn_on(self, **kwargs: Any) -> None:
         if ATTR_BRIGHTNESS in kwargs:
             self._last_brightness = kwargs[ATTR_BRIGHTNESS]
-        bos = round(self._last_brightness / HA_MAX * self._max)
         # Floor to 1 so a turn_on never maps to 0 (which reads as off).
-        await self._set(max(bos, 1))
+        await self._set(max(round(self._last_brightness / HA_MAX * self._max), 1))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self._set(0)
@@ -149,7 +113,7 @@ class BosDimmerLight(BosBaseLight):
         super()._handle_coordinator_update()
 
 
-class BosSwitchLight(BosBaseLight):
+class BosSwitchLight(_BosLightBase):
     """An on/off bOS light (boolean object)."""
 
     _attr_color_mode = ColorMode.ONOFF

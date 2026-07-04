@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to ComfortClick bOS",
-        "description": "Enter your bOS gateway URL and credentials. The next steps discover and select the lights.",
+        "description": "Enter your bOS gateway URL and credentials. The next steps discover and select the entities.",
         "data": {
           "base_url": "Gateway base URL",
           "username": "Username",
@@ -21,7 +21,7 @@
         "title": "Reconfigure ComfortClick bOS",
         "menu_options": {
           "reconfigure_credentials": "Change credentials (URL / username / password)",
-          "reconfigure_lights": "Re-scan and select lights"
+          "reconfigure_entities": "Re-scan and select entities"
         }
       },
       "reconfigure_credentials": {
@@ -35,23 +35,23 @@
       },
       "floor": {
         "title": "Choose a floor",
-        "description": "Pick a floor to select its lights, then repeat for other floors. {total} lights selected so far. Choose Finish when done.",
+        "description": "Pick a floor to select its entities, then repeat for other floors. {total} selected so far. Choose Finish when done.",
         "data": {
           "floor": "Floor"
         }
       },
-      "lights": {
-        "title": "Lights on {floor}",
-        "description": "Select the lights to add on {floor}.",
+      "items": {
+        "title": "Entities on {floor}",
+        "description": "Select the lights and sensors to add on {floor}.",
         "data": {
-          "lights": "Lights"
+          "entities": "Entities"
         }
       }
     },
     "error": {
       "cannot_connect": "Failed to reach the gateway. Check the base URL and network.",
       "invalid_auth": "Invalid username or password.",
-      "no_lights": "No lights were discovered.",
+      "no_lights": "No entities were discovered.",
       "unknown": "Unexpected error."
     },
     "abort": {
@@ -60,7 +60,7 @@
       "reconfigure_successful": "Selection saved.",
       "invalid_auth": "Stored credentials were rejected. Remove and re-add the integration.",
       "cannot_connect": "Failed to reach the gateway during re-scan.",
-      "no_lights": "No lights were discovered.",
+      "no_lights": "No entities were discovered.",
       "unknown": "Unexpected error during re-scan."
     }
   }

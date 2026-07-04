@@ -14,17 +14,17 @@ from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from .api import BosAuthError, BosClient, BosConnectionError
 from .const import (
     CONF_BASE_URL,
-    CONF_LIGHTS,
+    CONF_ENTITIES,
     DOMAIN,
-    LIGHT_OBJECT,
-    LIGHT_PANEL,
-    LIGHT_PANEL_PATH,
+    ENT_OBJECT,
+    ENT_PANEL,
+    ENT_PANEL_PATH,
 )
 from .coordinator import BosCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.LIGHT]
+PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.LIGHT, Platform.SENSOR]
 
 type BosConfigEntry = ConfigEntry[BosCoordinator]
 
@@ -52,9 +52,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: BosConfigEntry) -> bool:
         raise ConfigEntryNotReady(str(err)) from err
 
     panel_paths = {
-        light[LIGHT_PANEL_PATH]
-        for light in entry.data.get(CONF_LIGHTS, [])
-        if light.get(LIGHT_PANEL_PATH)
+        item[ENT_PANEL_PATH]
+        for item in entry.data.get(CONF_ENTITIES, [])
+        if item.get(ENT_PANEL_PATH)
     }
     coordinator = BosCoordinator(hass, client, panel_paths)
     await coordinator.async_config_entry_first_refresh()
@@ -73,11 +73,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: BosConfigEntry) -> bool
 async def async_remove_config_entry_device(
     hass: HomeAssistant, config_entry: BosConfigEntry, device_entry: dr.DeviceEntry
 ) -> bool:
-    """Allow deleting a device only if it no longer maps to a configured light."""
+    """Allow deleting a device only if it no longer maps to a configured entity."""
     base = config_entry.unique_id or config_entry.entry_id
     active = {
-        _device_id(base, light.get(LIGHT_PANEL))
-        for light in config_entry.data.get(CONF_LIGHTS, [])
+        _device_id(base, item.get(ENT_PANEL))
+        for item in config_entry.data.get(CONF_ENTITIES, [])
     }
     return not (device_entry.identifiers & active)
 
@@ -86,9 +86,9 @@ async def async_remove_config_entry_device(
 def _cleanup_stale(hass: HomeAssistant, entry: BosConfigEntry) -> None:
     """Drop entities/devices left over from a previous configuration."""
     base = entry.unique_id or entry.entry_id
-    lights = entry.data.get(CONF_LIGHTS, [])
-    current_uids = {f"{base}::{light[LIGHT_OBJECT]}" for light in lights}
-    current_devices = {_device_id(base, light.get(LIGHT_PANEL)) for light in lights}
+    items = entry.data.get(CONF_ENTITIES, [])
+    current_uids = {f"{base}::{item[ENT_OBJECT]}" for item in items}
+    current_devices = {_device_id(base, item.get(ENT_PANEL)) for item in items}
 
     ent_reg = er.async_get(hass)
     for entity in er.async_entries_for_config_entry(ent_reg, entry.entry_id):

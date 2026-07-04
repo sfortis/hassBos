@@ -6,25 +6,25 @@ DOMAIN = "comfortclick_bos"
 
 # Config entry keys
 CONF_BASE_URL = "base_url"
-CONF_OBJECT_NAME = "object_name"
-CONF_PANEL = "panel"
-CONF_LIGHTS = "lights"
+CONF_ENTITIES = "entities"
 
-# Root navigation node to scan for lights.
-LIGHTS_ROOT = "Lights & Shading"
-
-# Discovered light kinds.
+# Discovered entity kinds.
 KIND_DIMMER = "dimmer"
 KIND_SWITCH = "switch"
+KIND_SENSOR = "sensor"
+KIND_BINARY = "binary_sensor"
 
-# Keys inside each stored light dict.
-LIGHT_OBJECT = "object_name"
-LIGHT_NAME = "name"
-LIGHT_PANEL = "panel"
-LIGHT_PANEL_PATH = "panel_path"
-LIGHT_KIND = "kind"
-LIGHT_MIN = "min"
-LIGHT_MAX = "max"
+# Keys inside each stored entity descriptor dict.
+ENT_OBJECT = "object_name"
+ENT_NAME = "name"
+ENT_PANEL = "panel"
+ENT_PANEL_PATH = "panel_path"
+ENT_KIND = "kind"
+ENT_MIN = "min"  # dimmer
+ENT_MAX = "max"  # dimmer
+ENT_UNIT = "unit"  # sensor
+ENT_DEVICE_CLASS = "device_class"  # sensor / binary_sensor
+ENT_STATE_CLASS = "state_class"  # sensor
 
 # Gateway host prefix only. The user appends their project (AccessID) and enters
 # the full base URL in the config flow, e.g. "<gateway>/<AccessID>".
