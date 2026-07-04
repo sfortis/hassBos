@@ -16,6 +16,7 @@ from .const import (
     CONF_BASE_URL,
     CONF_ENTITIES,
     DOMAIN,
+    ENT_FORM,
     ENT_OBJECT,
     ENT_PANEL,
     ENT_PANEL_PATH,
@@ -56,12 +57,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: BosConfigEntry) -> bool:
     except BosConnectionError as err:
         raise ConfigEntryNotReady(str(err)) from err
 
+    configured = entities_from_entry(entry)
     panel_paths = {
-        item[ENT_PANEL_PATH]
-        for item in entities_from_entry(entry)
-        if item.get(ENT_PANEL_PATH)
+        item[ENT_PANEL_PATH] for item in configured if item.get(ENT_PANEL_PATH)
     }
-    coordinator = BosCoordinator(hass, client, panel_paths)
+    form_objs = {item[ENT_FORM] for item in configured if item.get(ENT_FORM)}
+    coordinator = BosCoordinator(hass, client, panel_paths, form_objs)
     await coordinator.async_config_entry_first_refresh()
 
     entry.runtime_data = coordinator

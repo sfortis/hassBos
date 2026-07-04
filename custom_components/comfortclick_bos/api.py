@@ -138,6 +138,17 @@ class BosClient:
         """Read the theme, whose Host.Nodes is the navigation tree of panels."""
         return await self._authed("GET", "/GetTheme")
 
+    async def get_device_form(self, object_name: str) -> dict:
+        """Read a device's popup form (e.g. an air-quality sensor's CO2/VOC/PM).
+
+        These values are NOT on any navigation panel; the web client fetches them
+        via GetDeviceForm when the device button is opened. Returns a panel-like
+        object with ValueUpdates + Controls at the top level.
+        """
+        return await self._authed(
+            "POST", "/GetDeviceForm", json={"objectName": object_name, "controlName": ""}
+        )
+
     async def _authed(
         self,
         method: str,

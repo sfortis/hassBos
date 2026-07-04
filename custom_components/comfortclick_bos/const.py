@@ -25,6 +25,7 @@ ENT_MAX = "max"  # dimmer
 ENT_UNIT = "unit"  # sensor
 ENT_DEVICE_CLASS = "device_class"  # sensor / binary_sensor
 ENT_STATE_CLASS = "state_class"  # sensor
+ENT_FORM = "form"  # air-quality sensor: GetDeviceForm object path for seeding
 
 # Gateway host prefix only. The user appends their project (AccessID) and enters
 # the full base URL in the config flow, e.g. "<gateway>/<AccessID>".
@@ -40,3 +41,8 @@ BOS_MAX = 100
 # re-handshook TLS (slow, 3-8s) and sometimes hit a backend without the session
 # (404). Do not raise this much.
 SCAN_INTERVAL = 2
+
+# How often to refresh air-quality device forms (CO2/PM/VOC), in seconds. These
+# change slowly and are fetched separately via GetDeviceForm, so poll them on a
+# much slower cadence than the 2s live channel.
+FORM_SCAN_INTERVAL = 300

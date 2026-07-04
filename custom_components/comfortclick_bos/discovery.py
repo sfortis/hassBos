@@ -1,14 +1,18 @@
 """Entity auto-discovery for ComfortClick bOS.
 
 Walks the whole navigation tree (GetTheme -> GetPanel per panel) and classifies
-every settable/readable control into a Home Assistant entity descriptor:
+every control into a Home Assistant entity descriptor:
 
 - dimmer light: IntegerControl + ValueTemplate "Dimmer" + writable
 - on/off light: BooleanControl + writable + ("Lamp" template or lamp icon)
 - sensor:       Double/IntegerControl + read-only (with a unit -> device_class)
 - binary sensor: BooleanControl + read-only (template -> device_class)
 
-Read-only over the network: GetTheme + GetPanel. Never writes.
+Air-quality readings (CO2/PM/VOC) are not on any panel: they hide behind an
+"Air Quality Sensor Button" (ValueTemplate "Gas") whose device form is fetched
+separately via GetDeviceForm. Those become sensors too.
+
+Read-only over the network: GetTheme + GetPanel + GetDeviceForm. Never writes.
 """
 
 from __future__ import annotations
@@ -18,6 +22,7 @@ import logging
 from .api import BosClient, BosError
 from .const import (
     ENT_DEVICE_CLASS,
+    ENT_FORM,
     ENT_KIND,
     ENT_MAX,
     ENT_MIN,
@@ -36,6 +41,7 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 _THEMES_PREFIX = "Themes\\"
+_AQ_TEMPLATE = "Gas"  # air-quality sensor button; real values via GetDeviceForm
 
 # Sensor unit -> (HA device_class, HA unit). Units not listed become plain
 # sensors (no device_class), keeping their raw unit.
@@ -83,6 +89,22 @@ def _has_lamp_icon(control: dict) -> bool:
     return "Lamp" in icon or "Bulb" in icon or fore == "Lamp"
 
 
+def _aqm_class(name: str, unit: str | None) -> tuple[str | None, str | None]:
+    """device_class + unit for an air-quality reading, keyed by its name."""
+    low = name.lower()
+    if "co2" in low:
+        return "carbon_dioxide", "ppm"
+    if "pm2" in low:
+        return "pm25", unit or "µg/m³"
+    if "pm10" in low:
+        return "pm10", unit or "µg/m³"
+    if "pm1" in low:
+        return "pm1", unit or "µg/m³"
+    if "voc" in low:
+        return None, unit or None  # index without a standard unit
+    return _UNIT_MAP.get(unit or "", (None, unit or None))
+
+
 def _classify(control: dict) -> tuple[str, dict] | None:
     """Return (kind, extra fields) for a control, or None if not an entity."""
     if not _object_name(control):
@@ -101,15 +123,17 @@ def _classify(control: dict) -> tuple[str, dict] | None:
             return KIND_SWITCH, {}
         return None  # settable non-lamp boolean (e.g. a socket) - skip
     if ui in ("BOSTheme.Controls.DoubleControl", "BOSTheme.Controls.IntegerControl"):
-        # Read-only numeric -> sensor.
-        device_class, unit = _UNIT_MAP.get(control.get("Unit") or "", (None, control.get("Unit") or None))
+        device_class, unit = _UNIT_MAP.get(
+            control.get("Unit") or "", (None, control.get("Unit") or None)
+        )
         return KIND_SENSOR, {
             ENT_UNIT: unit,
             ENT_DEVICE_CLASS: device_class,
             ENT_STATE_CLASS: "measurement",
         }
     if ui == "BOSTheme.Controls.BooleanControl":
-        # Read-only boolean -> binary sensor.
+        if template == _AQ_TEMPLATE:
+            return None  # air-quality button - values fetched via GetDeviceForm
         return KIND_BINARY, {ENT_DEVICE_CLASS: _BINARY_MAP.get(template or "")}
     return None
 
@@ -129,7 +153,8 @@ async def async_discover_entities(client: BosClient) -> list[dict]:
 
     entities: dict[str, dict] = {}
     seen_panels: set[str] = set()
-    await _walk(client, host, entities, seen_panels)
+    seen_forms: set[str] = set()
+    await _walk(client, host, entities, seen_panels, seen_forms)
     _LOGGER.debug(
         "Discovered %d entities across %d panels", len(entities), len(seen_panels)
     )
@@ -141,6 +166,7 @@ async def _walk(
     node: dict,
     entities: dict[str, dict],
     seen: set[str],
+    seen_forms: set[str],
 ) -> None:
     raw_path = node.get("Path", "") or ""
     panel_path = raw_path.removeprefix(_THEMES_PREFIX)
@@ -155,10 +181,15 @@ async def _walk(
             _LOGGER.debug("Skipping panel %r: %s", panel_path, err)
             panel = None
         if panel:
-            _extract(panel, panel_name, panel_path, entities)
+            forms = _extract(panel, panel_name, panel_path, entities)
+            for form_obj in forms:
+                if form_obj in seen_forms:
+                    continue
+                seen_forms.add(form_obj)
+                await _fetch_form(client, form_obj, panel_name, panel_path, entities)
 
     for child in node.get("Nodes", []) or []:
-        await _walk(client, child, entities, seen)
+        await _walk(client, child, entities, seen, seen_forms)
 
 
 def _extract(
@@ -166,9 +197,15 @@ def _extract(
     panel_name: str,
     panel_path: str,
     entities: dict[str, dict],
-) -> None:
+) -> list[str]:
+    """Add this panel's entities; return air-quality form object paths to fetch."""
     theme_object = panel.get("ThemeObject", {}) or {}
+    forms: list[str] = []
     for control in _iter_controls(theme_object.get("Controls")):
+        if control.get("ValueTemplate") == _AQ_TEMPLATE:
+            form_obj = (control.get("FormPanel") or {}).get("ObjectName")
+            if form_obj:
+                forms.append(form_obj)
         classified = _classify(control)
         if not classified:
             continue
@@ -183,4 +220,40 @@ def _extract(
             ENT_PANEL_PATH: panel_path,
             ENT_KIND: kind,
             **extra,
+        }
+    return forms
+
+
+async def _fetch_form(
+    client: BosClient,
+    form_obj: str,
+    panel_name: str,
+    panel_path: str,
+    entities: dict[str, dict],
+) -> None:
+    """Fetch an air-quality device form and add its readings as sensors."""
+    try:
+        form = await client.get_device_form(form_obj)
+    except BosError as err:
+        _LOGGER.debug("GetDeviceForm %r failed: %s", form_obj, err)
+        return
+    for control in _iter_controls(form.get("Controls")):
+        obj = _object_name(control)
+        if not obj or obj in entities:
+            continue
+        ui = control.get("UIControlType", "")
+        if ui not in ("BOSTheme.Controls.DoubleControl", "BOSTheme.Controls.IntegerControl"):
+            continue
+        name = obj.split("\\")[-1]
+        device_class, unit = _aqm_class(name, control.get("Unit"))
+        entities[obj] = {
+            ENT_OBJECT: obj,
+            ENT_NAME: name,
+            ENT_PANEL: panel_name,
+            ENT_PANEL_PATH: panel_path,
+            ENT_KIND: KIND_SENSOR,
+            ENT_UNIT: unit,
+            ENT_DEVICE_CLASS: device_class,
+            ENT_STATE_CLASS: "measurement",
+            ENT_FORM: form_obj,
         }
