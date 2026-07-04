@@ -105,7 +105,10 @@ class BosClimate(BosEntity, ClimateEntity):
                 self._idx_to_mode[idx] = ha_mode
                 self._mode_to_idx.setdefault(ha_mode, idx)
         modes = list(dict.fromkeys(self._idx_to_mode.values()))
-        self._attr_hvac_modes = ([HVACMode.OFF] + modes) if self._onoff else modes
+        if self._onoff:
+            modes = [HVACMode.OFF, *modes]
+        # HA rejects an empty hvac_modes list; fall back to a sane default.
+        self._attr_hvac_modes = modes or [HVACMode.HEAT_COOL]
 
         # Fan: bOS index <-> text.
         fan_map = item.get(ENT_FAN_MAP) or {}

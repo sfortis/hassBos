@@ -109,8 +109,9 @@ class BosDimmerLight(_BosLightBase):
     async def async_turn_on(self, **kwargs: Any) -> None:
         if ATTR_BRIGHTNESS in kwargs:
             self._last_brightness = kwargs[ATTR_BRIGHTNESS]
-        # Floor to 1 so a turn_on never maps to 0 (which reads as off).
-        await self._set(max(round(self._last_brightness / HA_MAX * self._max), 1))
+        # Floor above min so a turn_on never maps to a value that reads as off.
+        bos = round(self._last_brightness / HA_MAX * self._max)
+        await self._set(max(bos, self._min + 1))
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self._set(0)
@@ -149,7 +150,14 @@ class BosRgbLight(_BosLightBase):
     @property
     def _color(self) -> dict:
         raw = self._raw
-        return raw if isinstance(raw, dict) else {}
+        if isinstance(raw, dict):
+            return raw
+        if isinstance(raw, str):  # tolerate a JSON string form
+            try:
+                return json.loads(raw)
+            except ValueError:
+                return {}
+        return {}
 
     @property
     def is_on(self) -> bool | None:
@@ -176,6 +184,9 @@ class BosRgbLight(_BosLightBase):
             red, green, blue = kwargs[ATTR_RGB_COLOR]
         if ATTR_BRIGHTNESS in kwargs:
             alpha = kwargs[ATTR_BRIGHTNESS]
+        # Avoid turning "on" to black when the stored color is all-zero.
+        if not any((red, green, blue)):
+            red = green = blue = 255
         await self._write_color(int(red), int(green), int(blue), max(int(alpha), 1))
 
     async def async_turn_off(self, **kwargs: Any) -> None:

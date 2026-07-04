@@ -112,8 +112,12 @@ def _enum_map(control: dict) -> dict[str, str]:
     result: dict[str, str] = {}
     for option in control.get("StatusValues") or []:
         value, text = option.get("Value"), option.get("Text")
-        if value is not None and text:
+        if value is None or not text:
+            continue
+        try:
             result[str(int(value))] = text
+        except (TypeError, ValueError):
+            continue  # skip a malformed option instead of aborting discovery
     return result
 
 
