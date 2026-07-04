@@ -58,13 +58,27 @@ class BosClient:
         # Origin is the gateway host without the project path segment.
         parts = self._base.split("/", 3)
         self._origin = "/".join(parts[:3]) if len(parts) >= 3 else self._base
+        # Mirror the web client's request headers (verified from HAR). Connection
+        # is forced closed: the gateway does not keep-alive reliably, so reusing a
+        # pooled socket it already closed raised ServerDisconnected on the next call.
         self._headers = {
             "X-Requested-With": "XMLHttpRequest",
             "Content-Type": "application/json; charset=UTF-8",
             "Accept": "application/json, text/javascript, */*; q=0.01",
+            "Accept-Language": "en-US,en;q=0.9",
             "Referer": self._base + "/",
             "Origin": self._origin,
             "User-Agent": _BROWSER_UA,
+            "Sec-Fetch-Dest": "empty",
+            "Sec-Fetch-Mode": "cors",
+            "Sec-Fetch-Site": "same-origin",
+            "sec-ch-ua": (
+                '"Not)A;Brand";v="24", "Microsoft Edge WebView2";v="149", '
+                '"Microsoft Edge";v="149", "Chromium";v="149"'
+            ),
+            "sec-ch-ua-mobile": "?0",
+            "sec-ch-ua-platform": '"Windows"',
+            "Connection": "close",
         }
 
     async def login(self) -> dict:

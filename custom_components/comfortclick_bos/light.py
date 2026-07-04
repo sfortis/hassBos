@@ -85,12 +85,17 @@ class BosBaseLight(CoordinatorEntity[BosCoordinator], LightEntity):
         self._attr_name = light[LIGHT_NAME]
         base = entry.unique_id or entry.entry_id
         self._attr_unique_id = f"{base}::{self._object}"
-        panel = light.get(LIGHT_PANEL) or "bOS"
+        # Group by the physical bOS device (the path segment above the light),
+        # e.g. "DALI Lighting Control (2)"; suggest the floor/panel as the area.
+        parts = self._object.split("\\")
+        device_path = "\\".join(parts[:-1]) or self._object
+        device_name = parts[-2] if len(parts) >= 2 else self._object
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"{base}::{panel}")},
-            name=panel,
+            identifiers={(DOMAIN, f"{base}::{device_path}")},
+            name=device_name,
             manufacturer="ComfortClick",
             model="bOS",
+            suggested_area=light.get(LIGHT_PANEL) or None,
         )
 
     @property
