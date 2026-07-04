@@ -64,15 +64,23 @@ class BosCoordinator(DataUpdateCoordinator[dict[str, object]]):
         return dict(self._values)
 
     async def _seed(self) -> None:
-        """One-time initial snapshot: read every panel the lights live on."""
-        self._seeded = True  # do not retry forever; live updates fill gaps
+        """Initial snapshot: read every panel the lights live on.
+
+        Marked done only if at least one panel was read, so a transient failure
+        (e.g. a dropped connection) is retried on the next poll instead of
+        leaving entities stuck at unknown.
+        """
+        any_ok = False
         for path in self._panel_paths:
             try:
                 panel = await self.client.get_panel(path)
             except BosError as err:
                 _LOGGER.debug("Seed of panel %r failed: %s", path, err)
                 continue
+            any_ok = True
             theme_object = panel.get("ThemeObject", {}) or {}
             for update in theme_object.get("ValueUpdates", []):
                 if update.get("PropertyName") == "Value" and update.get("DeviceName"):
                     self._values[update["DeviceName"]] = update.get("Value")
+        if any_ok:
+            self._seeded = True

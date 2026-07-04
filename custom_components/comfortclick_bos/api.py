@@ -124,19 +124,30 @@ class BosClient:
             return await self._request(method, endpoint, **kwargs)
 
     async def _request(self, method: str, endpoint: str, **kwargs) -> dict:
-        """Single HTTP call. Maps auth rejections and transport errors."""
+        """Single HTTP call, retried once on a dropped connection.
+
+        The gateway does not keep connections alive reliably; a pooled socket it
+        already closed surfaces as ServerDisconnected/timeout on the next use.
+        Retrying once forces aiohttp to open a fresh connection.
+        """
         kwargs.setdefault("headers", self._headers)
         kwargs.setdefault("timeout", _TIMEOUT)
-        try:
-            async with self._session.request(
-                method, self._base + endpoint, **kwargs
-            ) as resp:
-                if resp.status in (401, 403):
-                    raise BosAuthError(f"{endpoint} rejected: HTTP {resp.status}")
-                resp.raise_for_status()
-                return await resp.json()
-        except (ClientError, TimeoutError, OSError) as err:
-            # ClientError covers HTTP/protocol issues; TimeoutError is a connect
-            # or total timeout (not a ClientError subclass); OSError covers
-            # DNS/socket failures. All are transient connectivity problems.
-            raise BosConnectionError(str(err)) from err
+        last_err: Exception | None = None
+        for attempt in (1, 2):
+            try:
+                async with self._session.request(
+                    method, self._base + endpoint, **kwargs
+                ) as resp:
+                    if resp.status in (401, 403):
+                        raise BosAuthError(f"{endpoint} rejected: HTTP {resp.status}")
+                    resp.raise_for_status()
+                    return await resp.json()
+            except (ClientError, TimeoutError, OSError) as err:
+                # ClientError covers HTTP/protocol issues; TimeoutError is a
+                # connect/total timeout (not a ClientError subclass); OSError
+                # covers DNS/socket failures. All are transient connectivity.
+                last_err = err
+                if attempt == 1:
+                    _LOGGER.debug("%s attempt 1 failed (%s); retrying", endpoint, err)
+                    continue
+        raise BosConnectionError(str(last_err)) from last_err
