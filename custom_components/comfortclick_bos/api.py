@@ -24,9 +24,11 @@ _BROWSER_UA = (
     "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0"
 )
 
-# Granular timeouts: a dead keep-alive connection fails fast on connect instead
-# of hanging until the total timeout, so a poll recovers on the next interval.
-_TIMEOUT = ClientTimeout(total=20, connect=8, sock_connect=8, sock_read=15)
+# Keep-alive is reused (no Connection: close): the gateway's TLS handshake is
+# occasionally slow (3-8s), so reusing a connection avoids paying it every poll.
+# The timeout is generous so a rare slow handshake is absorbed rather than cut
+# short (which would trigger a retry storm); retry-once still covers dropped sockets.
+_TIMEOUT = ClientTimeout(total=30, sock_read=20)
 
 
 class BosError(Exception):
@@ -58,9 +60,10 @@ class BosClient:
         # Origin is the gateway host without the project path segment.
         parts = self._base.split("/", 3)
         self._origin = "/".join(parts[:3]) if len(parts) >= 3 else self._base
-        # Mirror the web client's request headers (verified from HAR). Connection
-        # is forced closed: the gateway does not keep-alive reliably, so reusing a
-        # pooled socket it already closed raised ServerDisconnected on the next call.
+        # Mirror the web client's request headers (verified from HAR), including
+        # keep-alive: the gateway's TLS handshake is sometimes slow, so reusing
+        # the connection (as the web client does) avoids re-handshaking each poll.
+        # A dropped socket surfaces as ServerDisconnected and is handled by retry.
         self._headers = {
             "X-Requested-With": "XMLHttpRequest",
             "Content-Type": "application/json; charset=UTF-8",
@@ -78,7 +81,7 @@ class BosClient:
             ),
             "sec-ch-ua-mobile": "?0",
             "sec-ch-ua-platform": '"Windows"',
-            "Connection": "close",
+            "Connection": "keep-alive",
         }
 
     async def login(self) -> dict:
