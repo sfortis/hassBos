@@ -44,6 +44,7 @@ from .const import (
     KIND_BINARY,
     KIND_CLIMATE,
     KIND_DIMMER,
+    KIND_RGB,
     KIND_SELECT,
     KIND_SENSOR,
     KIND_SWITCH,
@@ -139,6 +140,8 @@ def _classify(control: dict) -> tuple[str, dict] | None:
     template = control.get("ValueTemplate")
     settable = control.get("ButtonSettable") is True
 
+    if ui == "BOSTheme.Controls.ColorPickerControl" and settable:
+        return KIND_RGB, {}
     if ui == "BOSTheme.Controls.IntegerControl" and settable and template == "Dimmer":
         return KIND_DIMMER, {
             ENT_MIN: control.get("MinValue"),

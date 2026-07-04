@@ -66,7 +66,7 @@ class BosCoordinator(DataUpdateCoordinator[dict[str, object]]):
                 if self._form_objs and self._poll_count % self._form_every == 0:
                     await self._refresh_forms()
             for update in await self.client.get_client_data():
-                if update.get("PropertyName") == "Value":
+                if update.get("PropertyName") in ("Value", "Color"):
                     name = update.get("DeviceName")
                     if name:
                         self._values[name] = update.get("Value")
@@ -111,5 +111,5 @@ class BosCoordinator(DataUpdateCoordinator[dict[str, object]]):
     def _absorb(self, panel_like: dict) -> None:
         """Copy a panel/form's ValueUpdates into the value cache."""
         for update in panel_like.get("ValueUpdates", []):
-            if update.get("PropertyName") == "Value" and update.get("DeviceName"):
+            if update.get("PropertyName") in ("Value", "Color") and update.get("DeviceName"):
                 self._values[update["DeviceName"]] = update.get("Value")

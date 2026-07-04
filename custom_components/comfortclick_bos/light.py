@@ -2,10 +2,16 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
-from homeassistant.components.light import ATTR_BRIGHTNESS, ColorMode, LightEntity
+from homeassistant.components.light import (
+    ATTR_BRIGHTNESS,
+    ATTR_RGB_COLOR,
+    ColorMode,
+    LightEntity,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -19,6 +25,7 @@ from .const import (
     ENT_MAX,
     ENT_MIN,
     KIND_DIMMER,
+    KIND_RGB,
     KIND_SWITCH,
 )
 from .entity import BosEntity
@@ -54,10 +61,13 @@ async def async_setup_entry(
     coordinator = entry.runtime_data
     entities: list[BosEntity] = []
     for item in entities_from_entry(entry):
-        if item.get(ENT_KIND) == KIND_DIMMER:
+        kind = item.get(ENT_KIND)
+        if kind == KIND_DIMMER:
             entities.append(BosDimmerLight(coordinator, entry, item))
-        elif item.get(ENT_KIND) == KIND_SWITCH:
+        elif kind == KIND_SWITCH:
             entities.append(BosSwitchLight(coordinator, entry, item))
+        elif kind == KIND_RGB:
+            entities.append(BosRgbLight(coordinator, entry, item))
     async_add_entities(entities)
 
 
@@ -128,3 +138,58 @@ class BosSwitchLight(_BosLightBase):
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         await self._set("false")
+
+
+class BosRgbLight(_BosLightBase):
+    """An RGB(W) light: a Color object {A,R,G,B} where A is brightness."""
+
+    _attr_color_mode = ColorMode.RGB
+    _attr_supported_color_modes = {ColorMode.RGB}
+
+    @property
+    def _color(self) -> dict:
+        raw = self._raw
+        return raw if isinstance(raw, dict) else {}
+
+    @property
+    def is_on(self) -> bool | None:
+        alpha = self._color.get("A")
+        return None if alpha is None else alpha > 0
+
+    @property
+    def brightness(self) -> int | None:
+        alpha = self._color.get("A")
+        return int(alpha) if alpha else None
+
+    @property
+    def rgb_color(self) -> tuple[int, int, int] | None:
+        color = self._color
+        if not color:
+            return None
+        return int(color.get("R", 0)), int(color.get("G", 0)), int(color.get("B", 0))
+
+    async def async_turn_on(self, **kwargs: Any) -> None:
+        color = self._color
+        red, green, blue = color.get("R", 255), color.get("G", 255), color.get("B", 255)
+        alpha = color.get("A") or HA_MAX
+        if ATTR_RGB_COLOR in kwargs:
+            red, green, blue = kwargs[ATTR_RGB_COLOR]
+        if ATTR_BRIGHTNESS in kwargs:
+            alpha = kwargs[ATTR_BRIGHTNESS]
+        await self._write_color(int(red), int(green), int(blue), max(int(alpha), 1))
+
+    async def async_turn_off(self, **kwargs: Any) -> None:
+        color = self._color
+        await self._write_color(
+            int(color.get("R", 0)), int(color.get("G", 0)), int(color.get("B", 0)), 0
+        )
+
+    async def _write_color(self, red: int, green: int, blue: int, alpha: int) -> None:
+        payload = {"ObjectName": "", "Error": False, "A": alpha, "R": red, "G": green, "B": blue}
+        try:
+            await self.coordinator.client.set_value(
+                self._object, json.dumps(payload), value_name="Color"
+            )
+        except BosError as err:
+            raise HomeAssistantError(f"Failed to control bOS RGB light: {err}") from err
+        self.coordinator.set_local(self._object, payload)

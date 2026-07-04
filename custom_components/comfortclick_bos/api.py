@@ -100,12 +100,18 @@ class BosClient:
         _LOGGER.debug("bOS login OK for %s", self._username)
         return data
 
-    async def set_value(self, object_name: str, value: str | int) -> dict:
-        """Write a value to an object (value is sent as a STRING, e.g. "50")."""
+    async def set_value(
+        self, object_name: str, value: str | int, value_name: str = "Value"
+    ) -> dict:
+        """Write a property (value sent as a STRING).
+
+        value_name is "Value" for most objects, but "Color" for RGB lights, whose
+        value is a JSON color object string {"A","R","G","B",...}.
+        """
         body = {
             "objectName": object_name,
-            "valueName": "Value",
-            "value": str(value),
+            "valueName": value_name,
+            "value": value if isinstance(value, str) else str(value),
         }
         data = await self._authed("POST", "/SetValue", json=body)
         if not data.get("Success"):

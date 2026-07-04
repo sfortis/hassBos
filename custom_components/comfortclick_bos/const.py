@@ -15,6 +15,7 @@ KIND_SENSOR = "sensor"
 KIND_BINARY = "binary_sensor"
 KIND_CLIMATE = "climate"
 KIND_SELECT = "select"
+KIND_RGB = "rgb"
 
 # Keys inside each stored entity descriptor dict.
 ENT_OBJECT = "object_name"
