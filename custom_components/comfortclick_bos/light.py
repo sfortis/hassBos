@@ -157,7 +157,8 @@ class BosSwitchLight(BosBaseLight):
         return _as_bool(self._raw)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        await self._set("True")
+        # The web client sends lowercase "true"/"false" (verified from HAR).
+        await self._set("true")
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        await self._set("False")
+        await self._set("false")
