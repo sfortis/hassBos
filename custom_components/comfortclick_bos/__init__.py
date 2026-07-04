@@ -34,8 +34,8 @@ def _device_id(base: str, panel: str | None) -> tuple[str, str]:
 
 
 def entities_from_entry(entry: ConfigEntry) -> list[dict]:
-    """Configured entity descriptors, with fallback to the old 'lights' key."""
-    return entry.data.get(CONF_ENTITIES) or entry.data.get("lights") or []
+    """Configured entity descriptors."""
+    return entry.data.get(CONF_ENTITIES, [])
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: BosConfigEntry) -> bool:
