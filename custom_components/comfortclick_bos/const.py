@@ -14,6 +14,7 @@ KIND_SWITCH = "switch"
 KIND_SENSOR = "sensor"
 KIND_BINARY = "binary_sensor"
 KIND_CLIMATE = "climate"
+KIND_SELECT = "select"
 
 # Keys inside each stored entity descriptor dict.
 ENT_OBJECT = "object_name"
@@ -36,6 +37,10 @@ ENT_FAN = "fan"
 ENT_TEMP = "temp"
 ENT_MODE_MAP = "mode_map"  # {bOS index (str): bOS text} e.g. "1" -> "HEAT"
 ENT_FAN_MAP = "fan_map"  # {bOS index (str): bOS text} e.g. "2" -> "MED"
+
+# Select / enum-sensor keys.
+ENT_OPTIONS = "options"  # {bOS index (str): text} for select or enum sensor
+ENT_DIAGNOSTIC = "diagnostic"  # bool: place entity in the diagnostic category
 
 # Gateway host prefix only. The user appends their project (AccessID) and enters
 # the full base URL in the config flow, e.g. "<gateway>/<AccessID>".

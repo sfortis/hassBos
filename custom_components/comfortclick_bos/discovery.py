@@ -22,6 +22,7 @@ import logging
 from .api import BosClient, BosError
 from .const import (
     ENT_DEVICE_CLASS,
+    ENT_DIAGNOSTIC,
     ENT_FAN,
     ENT_FAN_MAP,
     ENT_FORM,
@@ -33,6 +34,7 @@ from .const import (
     ENT_NAME,
     ENT_OBJECT,
     ENT_ONOFF,
+    ENT_OPTIONS,
     ENT_PANEL,
     ENT_PANEL_PATH,
     ENT_SETPOINT,
@@ -42,6 +44,7 @@ from .const import (
     KIND_BINARY,
     KIND_CLIMATE,
     KIND_DIMMER,
+    KIND_SELECT,
     KIND_SENSOR,
     KIND_SWITCH,
 )
@@ -51,6 +54,7 @@ _LOGGER = logging.getLogger(__name__)
 _THEMES_PREFIX = "Themes\\"
 _AQ_FORM = "Air Quality"
 _AC_FORM = "Air Conditioning"
+_VENT_FORM = "Ventilation"
 
 _UNIT_MAP: dict[str, tuple[str | None, str]] = {
     "°C": ("temperature", "°C"),
@@ -99,7 +103,7 @@ def _form_target(control: dict) -> str | None:
     if control.get("EnableForm") is not True:
         return None
     form = (control.get("FormPanel") or {}).get("ObjectName") or ""
-    return form if (_AQ_FORM in form or _AC_FORM in form) else None
+    return form if any(k in form for k in (_AQ_FORM, _AC_FORM, _VENT_FORM)) else None
 
 
 def _enum_map(control: dict) -> dict[str, str]:
@@ -254,6 +258,8 @@ async def _fetch_form(
         return
     if _AC_FORM in form_obj:
         _extract_climate(form, form_obj, panel_name, panel_path, entities)
+    elif _VENT_FORM in form_obj:
+        _extract_ventilation(form, form_obj, panel_name, panel_path, entities)
     else:
         _extract_air_quality(form, form_obj, panel_name, panel_path, entities)
 
@@ -321,6 +327,11 @@ def _extract_climate(
 
     if not (setpoint or mode):
         return  # not a recognisable A/C unit
+    # Member objects belong to this climate entity, not standalone sensors that a
+    # read-only panel summary may have already added.
+    for member in (onoff, setpoint, mode, fan, temp):
+        if member:
+            entities.pop(member, None)
     entities[form_obj] = {
         ENT_OBJECT: form_obj,
         ENT_NAME: form_obj.split("\\")[-1],
@@ -338,3 +349,51 @@ def _extract_climate(
         ENT_MODE_MAP: mode_map,
         ENT_FAN_MAP: fan_map,
     }
+
+
+def _extract_ventilation(
+    form: dict,
+    form_obj: str,
+    panel_name: str,
+    panel_path: str,
+    entities: dict[str, dict],
+) -> None:
+    """An ERV unit -> select (Mode) + status sensors. Only Mode is settable."""
+    for control in _iter_controls(form.get("Controls")):
+        obj = _object_name(control)
+        if not obj:
+            continue
+        # Form-derived entities win over a read-only panel summary of the same object.
+        template = control.get("ValueTemplate")
+        name = obj.split("\\")[-1]
+        settable = control.get("ButtonSettable") is True
+        base = {
+            ENT_OBJECT: obj,
+            ENT_NAME: name,
+            ENT_PANEL: panel_name,
+            ENT_PANEL_PATH: panel_path,
+            ENT_FORM: form_obj,
+        }
+        if template == "Mode" and settable:
+            entities[obj] = {**base, ENT_KIND: KIND_SELECT, ENT_OPTIONS: _enum_map(control)}
+        elif template == "Power":
+            entities[obj] = {**base, ENT_KIND: KIND_BINARY, ENT_DEVICE_CLASS: "running"}
+        elif "Fan Speed" in name:
+            entities[obj] = {
+                **base,
+                ENT_KIND: KIND_SENSOR,
+                ENT_DEVICE_CLASS: "enum",
+                ENT_OPTIONS: _enum_map(control),
+                ENT_STATE_CLASS: None,
+                ENT_UNIT: None,
+            }
+        elif "Error Code" in name:
+            entities[obj] = {
+                **base,
+                ENT_KIND: KIND_SENSOR,
+                ENT_DEVICE_CLASS: "enum",
+                ENT_OPTIONS: _enum_map(control),
+                ENT_STATE_CLASS: None,
+                ENT_UNIT: None,
+                ENT_DIAGNOSTIC: True,
+            }

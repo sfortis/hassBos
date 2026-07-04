@@ -1,4 +1,4 @@
-"""Sensor platform for ComfortClick bOS (read-only numeric controls)."""
+"""Sensor platform for ComfortClick bOS (read-only numeric + enum controls)."""
 
 from __future__ import annotations
 
@@ -7,13 +7,16 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import BosConfigEntry, entities_from_entry
 from .const import (
     ENT_DEVICE_CLASS,
+    ENT_DIAGNOSTIC,
     ENT_KIND,
+    ENT_OPTIONS,
     ENT_STATE_CLASS,
     ENT_UNIT,
     KIND_SENSOR,
@@ -26,7 +29,7 @@ async def async_setup_entry(
     entry: BosConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up numeric sensors from the config entry."""
+    """Set up numeric and enum sensors from the config entry."""
     coordinator = entry.runtime_data
     async_add_entities(
         BosSensor(coordinator, entry, item)
@@ -36,10 +39,20 @@ async def async_setup_entry(
 
 
 class BosSensor(BosEntity, SensorEntity):
-    """A read-only numeric bOS value."""
+    """A read-only bOS value: numeric (with a unit) or enum (index -> text)."""
 
     def __init__(self, coordinator, entry, item) -> None:
         super().__init__(coordinator, entry, item)
+        self._options: dict[str, str] = item.get(ENT_OPTIONS) or {}
+        if item.get(ENT_DIAGNOSTIC):
+            self._attr_entity_category = EntityCategory.DIAGNOSTIC
+
+        if self._options:
+            # Enum sensor: value is one of a fixed set of texts.
+            self._attr_device_class = SensorDeviceClass.ENUM
+            self._attr_options = list(self._options.values())
+            return
+
         self._attr_native_unit_of_measurement = item.get(ENT_UNIT)
         device_class = item.get(ENT_DEVICE_CLASS)
         self._attr_device_class = (
@@ -51,8 +64,14 @@ class BosSensor(BosEntity, SensorEntity):
         )
 
     @property
-    def native_value(self) -> float | None:
+    def native_value(self) -> float | str | None:
+        raw = self._raw
+        if self._options:
+            try:
+                return self._options.get(str(int(float(raw))))  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return None
         try:
-            return float(self._raw)  # type: ignore[arg-type]
+            return float(raw)  # type: ignore[arg-type]
         except (TypeError, ValueError):
             return None
