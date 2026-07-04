@@ -13,6 +13,7 @@ KIND_DIMMER = "dimmer"
 KIND_SWITCH = "switch"
 KIND_SENSOR = "sensor"
 KIND_BINARY = "binary_sensor"
+KIND_CLIMATE = "climate"
 
 # Keys inside each stored entity descriptor dict.
 ENT_OBJECT = "object_name"
@@ -25,7 +26,16 @@ ENT_MAX = "max"  # dimmer
 ENT_UNIT = "unit"  # sensor
 ENT_DEVICE_CLASS = "device_class"  # sensor / binary_sensor
 ENT_STATE_CLASS = "state_class"  # sensor
-ENT_FORM = "form"  # air-quality sensor: GetDeviceForm object path for seeding
+ENT_FORM = "form"  # GetDeviceForm object path for seeding (AQ sensor / climate)
+
+# Climate (A/C) descriptor keys: references to the unit's member objects.
+ENT_ONOFF = "onoff"
+ENT_SETPOINT = "setpoint"
+ENT_MODE = "mode"
+ENT_FAN = "fan"
+ENT_TEMP = "temp"
+ENT_MODE_MAP = "mode_map"  # {bOS index (str): bOS text} e.g. "1" -> "HEAT"
+ENT_FAN_MAP = "fan_map"  # {bOS index (str): bOS text} e.g. "2" -> "MED"
 
 # Gateway host prefix only. The user appends their project (AccessID) and enters
 # the full base URL in the config flow, e.g. "<gateway>/<AccessID>".

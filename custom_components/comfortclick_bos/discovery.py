@@ -5,12 +5,12 @@ every control into a Home Assistant entity descriptor:
 
 - dimmer light: IntegerControl + ValueTemplate "Dimmer" + writable
 - on/off light: BooleanControl + writable + ("Lamp" template or lamp icon)
-- sensor:       Double/IntegerControl + read-only (with a unit -> device_class)
+- sensor:       Double/IntegerControl + read-only (unit -> device_class)
 - binary sensor: BooleanControl + read-only (template -> device_class)
 
-Air-quality readings (CO2/PM/VOC) are not on any panel: they hide behind an
-"Air Quality Sensor Button" (ValueTemplate "Gas") whose device form is fetched
-separately via GetDeviceForm. Those become sensors too.
+Some devices hide behind a button whose FormPanel is fetched via GetDeviceForm:
+- Air Quality forms  -> CO2/PM/VOC sensors
+- Air Conditioning forms -> one climate entity per A/C unit
 
 Read-only over the network: GetTheme + GetPanel + GetDeviceForm. Never writes.
 """
@@ -22,17 +22,25 @@ import logging
 from .api import BosClient, BosError
 from .const import (
     ENT_DEVICE_CLASS,
+    ENT_FAN,
+    ENT_FAN_MAP,
     ENT_FORM,
     ENT_KIND,
     ENT_MAX,
     ENT_MIN,
+    ENT_MODE,
+    ENT_MODE_MAP,
     ENT_NAME,
     ENT_OBJECT,
+    ENT_ONOFF,
     ENT_PANEL,
     ENT_PANEL_PATH,
+    ENT_SETPOINT,
     ENT_STATE_CLASS,
+    ENT_TEMP,
     ENT_UNIT,
     KIND_BINARY,
+    KIND_CLIMATE,
     KIND_DIMMER,
     KIND_SENSOR,
     KIND_SWITCH,
@@ -41,10 +49,9 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 _THEMES_PREFIX = "Themes\\"
-_AQ_TEMPLATE = "Gas"  # air-quality sensor button; real values via GetDeviceForm
+_AQ_FORM = "Air Quality"
+_AC_FORM = "Air Conditioning"
 
-# Sensor unit -> (HA device_class, HA unit). Units not listed become plain
-# sensors (no device_class), keeping their raw unit.
 _UNIT_MAP: dict[str, tuple[str | None, str]] = {
     "°C": ("temperature", "°C"),
     "W": ("power", "W"),
@@ -61,7 +68,6 @@ _UNIT_MAP: dict[str, tuple[str | None, str]] = {
     "€": ("monetary", "EUR"),
 }
 
-# Binary sensor ValueTemplate -> HA device_class.
 _BINARY_MAP: dict[str, str] = {
     "Movement": "motion",
     "Rain": "moisture",
@@ -71,7 +77,6 @@ _BINARY_MAP: dict[str, str] = {
 
 
 def _iter_controls(controls: list | None):
-    """Yield every control, recursing into nested (frame) controls."""
     for control in controls or []:
         yield control
         nested = control.get("Controls")
@@ -89,8 +94,25 @@ def _has_lamp_icon(control: dict) -> bool:
     return "Lamp" in icon or "Bulb" in icon or fore == "Lamp"
 
 
+def _form_target(control: dict) -> str | None:
+    """The GetDeviceForm object this control opens, if it is an AQ/AC button."""
+    if control.get("EnableForm") is not True:
+        return None
+    form = (control.get("FormPanel") or {}).get("ObjectName") or ""
+    return form if (_AQ_FORM in form or _AC_FORM in form) else None
+
+
+def _enum_map(control: dict) -> dict[str, str]:
+    """{bOS index (str): text} from a control's StatusValues."""
+    result: dict[str, str] = {}
+    for option in control.get("StatusValues") or []:
+        value, text = option.get("Value"), option.get("Text")
+        if value is not None and text:
+            result[str(int(value))] = text
+    return result
+
+
 def _aqm_class(name: str, unit: str | None) -> tuple[str | None, str | None]:
-    """device_class + unit for an air-quality reading, keyed by its name."""
     low = name.lower()
     if "co2" in low:
         return "carbon_dioxide", "ppm"
@@ -101,12 +123,12 @@ def _aqm_class(name: str, unit: str | None) -> tuple[str | None, str | None]:
     if "pm1" in low:
         return "pm1", unit or "µg/m³"
     if "voc" in low:
-        return None, unit or None  # index without a standard unit
+        return None, unit or None
     return _UNIT_MAP.get(unit or "", (None, unit or None))
 
 
 def _classify(control: dict) -> tuple[str, dict] | None:
-    """Return (kind, extra fields) for a control, or None if not an entity."""
+    """Return (kind, extra fields) for a plain control, or None."""
     if not _object_name(control):
         return None
     ui = control.get("UIControlType", "")
@@ -121,7 +143,7 @@ def _classify(control: dict) -> tuple[str, dict] | None:
     if ui == "BOSTheme.Controls.BooleanControl" and settable:
         if template == "Lamp" or _has_lamp_icon(control):
             return KIND_SWITCH, {}
-        return None  # settable non-lamp boolean (e.g. a socket) - skip
+        return None
     if ui in ("BOSTheme.Controls.DoubleControl", "BOSTheme.Controls.IntegerControl"):
         device_class, unit = _UNIT_MAP.get(
             control.get("Unit") or "", (None, control.get("Unit") or None)
@@ -132,19 +154,14 @@ def _classify(control: dict) -> tuple[str, dict] | None:
             ENT_STATE_CLASS: "measurement",
         }
     if ui == "BOSTheme.Controls.BooleanControl":
-        if template == _AQ_TEMPLATE:
-            return None  # air-quality button - values fetched via GetDeviceForm
+        if _form_target(control):
+            return None  # form-opener button, handled via GetDeviceForm
         return KIND_BINARY, {ENT_DEVICE_CLASS: _BINARY_MAP.get(template or "")}
     return None
 
 
 async def async_discover_entities(client: BosClient) -> list[dict]:
-    """Return entity descriptors from the whole navigation tree.
-
-    The navigation layout is project-specific (some installs use "Lights &
-    Shading", others "Rooms", etc.), so the whole tree is scanned. Panels with
-    nothing of interest simply contribute no entities.
-    """
+    """Return entity descriptors from the whole navigation tree."""
     theme = await client.get_theme()
     host = theme.get("Host", {}) or {}
     if not host:
@@ -177,7 +194,6 @@ async def _walk(
         try:
             panel = await client.get_panel(panel_path)
         except BosError as err:
-            # Container nodes have no panel of their own (404) - skip quietly.
             _LOGGER.debug("Skipping panel %r: %s", panel_path, err)
             panel = None
         if panel:
@@ -198,21 +214,20 @@ def _extract(
     panel_path: str,
     entities: dict[str, dict],
 ) -> list[str]:
-    """Add this panel's entities; return air-quality form object paths to fetch."""
+    """Add plain entities; return AQ/AC form object paths to fetch."""
     theme_object = panel.get("ThemeObject", {}) or {}
     forms: list[str] = []
     for control in _iter_controls(theme_object.get("Controls")):
-        if control.get("ValueTemplate") == _AQ_TEMPLATE:
-            form_obj = (control.get("FormPanel") or {}).get("ObjectName")
-            if form_obj:
-                forms.append(form_obj)
+        form = _form_target(control)
+        if form:
+            forms.append(form)
         classified = _classify(control)
         if not classified:
             continue
         kind, extra = classified
         obj = _object_name(control)
         if obj in entities:
-            continue  # same object can appear on multiple panels
+            continue
         entities[obj] = {
             ENT_OBJECT: obj,
             ENT_NAME: obj.split("\\")[-1],
@@ -231,18 +246,33 @@ async def _fetch_form(
     panel_path: str,
     entities: dict[str, dict],
 ) -> None:
-    """Fetch an air-quality device form and add its readings as sensors."""
+    """Fetch a device form and add its entities (air quality or A/C climate)."""
     try:
         form = await client.get_device_form(form_obj)
     except BosError as err:
         _LOGGER.debug("GetDeviceForm %r failed: %s", form_obj, err)
         return
+    if _AC_FORM in form_obj:
+        _extract_climate(form, form_obj, panel_name, panel_path, entities)
+    else:
+        _extract_air_quality(form, form_obj, panel_name, panel_path, entities)
+
+
+def _extract_air_quality(
+    form: dict,
+    form_obj: str,
+    panel_name: str,
+    panel_path: str,
+    entities: dict[str, dict],
+) -> None:
     for control in _iter_controls(form.get("Controls")):
         obj = _object_name(control)
         if not obj or obj in entities:
             continue
-        ui = control.get("UIControlType", "")
-        if ui not in ("BOSTheme.Controls.DoubleControl", "BOSTheme.Controls.IntegerControl"):
+        if control.get("UIControlType", "") not in (
+            "BOSTheme.Controls.DoubleControl",
+            "BOSTheme.Controls.IntegerControl",
+        ):
             continue
         name = obj.split("\\")[-1]
         device_class, unit = _aqm_class(name, control.get("Unit"))
@@ -257,3 +287,54 @@ async def _fetch_form(
             ENT_STATE_CLASS: "measurement",
             ENT_FORM: form_obj,
         }
+
+
+def _extract_climate(
+    form: dict,
+    form_obj: str,
+    panel_name: str,
+    panel_path: str,
+    entities: dict[str, dict],
+) -> None:
+    """Build one climate descriptor from an A/C device form."""
+    onoff = setpoint = mode = fan = temp = None
+    smin = smax = None
+    mode_map: dict[str, str] = {}
+    fan_map: dict[str, str] = {}
+
+    for control in _iter_controls(form.get("Controls")):
+        obj = _object_name(control)
+        if not obj:
+            continue
+        template = control.get("ValueTemplate")
+        name = obj.split("\\")[-1]
+        if template == "Power":
+            onoff = obj
+        elif template == "Temperature Setpoint [°C]":
+            setpoint, smin, smax = obj, control.get("MinValue"), control.get("MaxValue")
+        elif template == "Temperature [°C]" and temp is None:
+            temp = obj
+        elif template == "Mode":
+            mode, mode_map = obj, _enum_map(control)
+        elif "Fan Speed" in name:
+            fan, fan_map = obj, _enum_map(control)
+
+    if not (setpoint or mode):
+        return  # not a recognisable A/C unit
+    entities[form_obj] = {
+        ENT_OBJECT: form_obj,
+        ENT_NAME: form_obj.split("\\")[-1],
+        ENT_PANEL: panel_name,
+        ENT_PANEL_PATH: panel_path,
+        ENT_KIND: KIND_CLIMATE,
+        ENT_FORM: form_obj,
+        ENT_ONOFF: onoff,
+        ENT_SETPOINT: setpoint,
+        ENT_MODE: mode,
+        ENT_FAN: fan,
+        ENT_TEMP: temp,
+        ENT_MIN: smin,
+        ENT_MAX: smax,
+        ENT_MODE_MAP: mode_map,
+        ENT_FAN_MAP: fan_map,
+    }

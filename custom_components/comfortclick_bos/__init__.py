@@ -25,7 +25,12 @@ from .coordinator import BosCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS: list[Platform] = [Platform.BINARY_SENSOR, Platform.LIGHT, Platform.SENSOR]
+PLATFORMS: list[Platform] = [
+    Platform.BINARY_SENSOR,
+    Platform.CLIMATE,
+    Platform.LIGHT,
+    Platform.SENSOR,
+]
 
 type BosConfigEntry = ConfigEntry[BosCoordinator]
 
