@@ -1,7 +1,8 @@
-"""Config flow for ComfortClick bOS: credentials, then per-floor light selection.
+"""Config flow for ComfortClick bOS.
 
-After connecting and discovering, the user picks lights one floor (panel) at a
-time from a dropdown, then finishes. Selections accumulate across floors.
+- user:        credentials -> discover -> per-floor light selection -> create
+- reauth:      re-enter only the password when the session is rejected
+- reconfigure: menu -> change credentials, or re-scan and re-select lights
 """
 
 from __future__ import annotations
@@ -69,8 +70,25 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
         self._selected: dict[str, dict] = {}
         self._panel: str = ""
 
-    async def _connect_and_discover(self, creds: dict[str, Any]) -> dict[str, str]:
-        """Validate credentials and run discovery. Returns form errors (empty = ok)."""
+    async def _login(self, creds: dict[str, Any]) -> dict[str, str]:
+        """Validate credentials with a login. Returns form errors (empty = ok)."""
+        session = async_create_clientsession(self.hass)
+        client = BosClient(
+            session, creds[CONF_BASE_URL], creds[CONF_USERNAME], creds[CONF_PASSWORD]
+        )
+        try:
+            await client.login()
+        except BosAuthError:
+            return {"base": "invalid_auth"}
+        except BosConnectionError:
+            return {"base": "cannot_connect"}
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Unexpected error validating credentials")
+            return {"base": "unknown"}
+        return {}
+
+    async def _discover(self, creds: dict[str, Any]) -> dict[str, str]:
+        """Login and discover lights, grouping by panel. Returns form errors."""
         session = async_create_clientsession(self.hass)
         client = BosClient(
             session, creds[CONF_BASE_URL], creds[CONF_USERNAME], creds[CONF_PASSWORD]
@@ -100,7 +118,7 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             await self.async_set_unique_id(user_input[CONF_BASE_URL])
             self._abort_if_unique_id_configured()
-            errors = await self._connect_and_discover(user_input)
+            errors = await self._discover(user_input)
             if not errors:
                 self._creds = user_input
                 return await self.async_step_floor()
@@ -108,20 +126,70 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="user", data_schema=_creds_schema(user_input or {}), errors=errors
         )
 
+    async def async_step_reauth(
+        self, entry_data: dict[str, Any]
+    ) -> ConfigFlowResult:
+        """Triggered when the stored session is rejected."""
+        return await self.async_step_reauth_confirm()
+
+    async def async_step_reauth_confirm(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Re-enter only the password."""
+        entry = self._get_reauth_entry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            creds = {**entry.data, CONF_PASSWORD: user_input[CONF_PASSWORD]}
+            errors = await self._login(creds)
+            if not errors:
+                return self.async_update_reload_and_abort(entry, data=creds)
+        return self.async_show_form(
+            step_id="reauth_confirm",
+            data_schema=vol.Schema({vol.Required(CONF_PASSWORD): str}),
+            errors=errors,
+            description_placeholders={CONF_USERNAME: entry.data[CONF_USERNAME]},
+        )
+
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Re-scan using the stored credentials (never re-asks for them)."""
+        """Choose whether to change credentials or re-scan lights."""
+        return self.async_show_menu(
+            step_id="reconfigure",
+            menu_options=["reconfigure_credentials", "reconfigure_lights"],
+        )
+
+    async def async_step_reconfigure_credentials(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Update the stored credentials (gateway URL / username / password)."""
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            errors = await self._login(user_input)
+            if not errors:
+                return self.async_update_reload_and_abort(
+                    entry, data={**entry.data, **user_input}
+                )
+        return self.async_show_form(
+            step_id="reconfigure_credentials",
+            data_schema=_creds_schema(user_input or entry.data),
+            errors=errors,
+        )
+
+    async def async_step_reconfigure_lights(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Re-scan with the stored credentials and re-select lights."""
         entry = self._get_reconfigure_entry()
         self._creds = {
             CONF_BASE_URL: entry.data[CONF_BASE_URL],
             CONF_USERNAME: entry.data[CONF_USERNAME],
             CONF_PASSWORD: entry.data[CONF_PASSWORD],
         }
-        errors = await self._connect_and_discover(self._creds)
+        errors = await self._discover(self._creds)
         if errors:
             return self.async_abort(reason=errors["base"])
-        # Pre-select the currently configured lights that still exist.
         discovered_objs = {light[LIGHT_OBJECT] for light in self._discovered}
         for light in entry.data.get(CONF_LIGHTS, []):
             if light[LIGHT_OBJECT] in discovered_objs:

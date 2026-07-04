@@ -10,6 +10,29 @@
           "password": "Password"
         }
       },
+      "reauth_confirm": {
+        "title": "Re-authenticate ComfortClick bOS",
+        "description": "The session for {username} was rejected. Enter the current password.",
+        "data": {
+          "password": "Password"
+        }
+      },
+      "reconfigure": {
+        "title": "Reconfigure ComfortClick bOS",
+        "menu_options": {
+          "reconfigure_credentials": "Change credentials (URL / username / password)",
+          "reconfigure_lights": "Re-scan and select lights"
+        }
+      },
+      "reconfigure_credentials": {
+        "title": "Update credentials",
+        "description": "Update the gateway URL, username or password.",
+        "data": {
+          "base_url": "Gateway base URL",
+          "username": "Username",
+          "password": "Password"
+        }
+      },
       "floor": {
         "title": "Choose a floor",
         "description": "Pick a floor to select its lights, then repeat for other floors. {total} lights selected so far. Choose Finish when done.",
@@ -33,6 +56,7 @@
     },
     "abort": {
       "already_configured": "This gateway is already configured.",
+      "reauth_successful": "Password updated.",
       "reconfigure_successful": "Selection saved.",
       "invalid_auth": "Stored credentials were rejected. Remove and re-add the integration.",
       "cannot_connect": "Failed to reach the gateway during re-scan.",
