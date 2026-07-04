@@ -118,9 +118,16 @@ class BosClient:
         Mirrors the web client: GET /GetClientData?_=<ms>. The gateway returns
         only what changed since this session's previous poll (possibly empty).
         Each item is {DeviceName, PropertyName:"Value", Value:<number>}.
+
+        A 404 here means the session/backend no longer knows this client (load
+        balancer routed elsewhere), so treat it as an auth failure to force a
+        re-login. NOTE: 404 is only auth-like for this endpoint - GetPanel uses
+        404 legitimately for container nodes.
         """
         params = {"_": str(int(time.time() * 1000))}
-        data = await self._authed("GET", "/GetClientData", params=params)
+        data = await self._authed(
+            "GET", "/GetClientData", auth_statuses=(401, 403, 404), params=params
+        )
         return data.get("PropertyUpdates", []) or []
 
     async def get_panel(self, path: str) -> dict:
@@ -131,16 +138,34 @@ class BosClient:
         """Read the theme, whose Host.Nodes is the navigation tree of panels."""
         return await self._authed("GET", "/GetTheme")
 
-    async def _authed(self, method: str, endpoint: str, **kwargs) -> dict:
+    async def _authed(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        auth_statuses: tuple[int, ...] = (401, 403),
+        **kwargs,
+    ) -> dict:
         """Run a request, re-logging in once if the session is rejected."""
         try:
-            return await self._request(method, endpoint, **kwargs)
+            return await self._request(
+                method, endpoint, auth_statuses=auth_statuses, **kwargs
+            )
         except BosAuthError:
             _LOGGER.debug("bOS session rejected, re-logging in and retrying")
             await self.login()
-            return await self._request(method, endpoint, **kwargs)
+            return await self._request(
+                method, endpoint, auth_statuses=auth_statuses, **kwargs
+            )
 
-    async def _request(self, method: str, endpoint: str, **kwargs) -> dict:
+    async def _request(
+        self,
+        method: str,
+        endpoint: str,
+        *,
+        auth_statuses: tuple[int, ...] = (401, 403),
+        **kwargs,
+    ) -> dict:
         """Single HTTP call, retried once on a dropped connection.
 
         The gateway does not keep connections alive reliably; a pooled socket it
@@ -155,7 +180,7 @@ class BosClient:
                 async with self._session.request(
                     method, self._base + endpoint, **kwargs
                 ) as resp:
-                    if resp.status in (401, 403):
+                    if resp.status in auth_statuses:
                         raise BosAuthError(f"{endpoint} rejected: HTTP {resp.status}")
                     resp.raise_for_status()
                     return await resp.json()
