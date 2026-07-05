@@ -9,7 +9,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import BosConfigEntry, entities_from_entry
 from .api import BosError
-from .const import ENT_KIND, ENT_OPTIONS, KIND_SELECT
+from .const import ENT_ICON, ENT_KIND, ENT_OPTIONS, KIND_SELECT
 from .entity import BosEntity
 
 
@@ -35,6 +35,8 @@ class BosSelect(BosEntity, SelectEntity):
         self._options: dict[str, str] = item.get(ENT_OPTIONS) or {}
         self._text_to_idx = {text: idx for idx, text in self._options.items()}
         self._attr_options = list(self._options.values())
+        if item.get(ENT_ICON):
+            self._attr_icon = item[ENT_ICON]
 
     @property
     def current_option(self) -> str | None:

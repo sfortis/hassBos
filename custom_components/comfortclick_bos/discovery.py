@@ -387,7 +387,12 @@ def _extract_ventilation(
             ENT_FORM: form_obj,
         }
         if template == "Mode" and settable:
-            entities[obj] = {**base, ENT_KIND: KIND_SELECT, ENT_OPTIONS: _enum_map(control)}
+            entities[obj] = {
+                **base,
+                ENT_KIND: KIND_SELECT,
+                ENT_OPTIONS: _enum_map(control),
+                ENT_ICON: "mdi:air-filter",
+            }
         elif template == "Power":
             entities[obj] = {**base, ENT_KIND: KIND_BINARY, ENT_DEVICE_CLASS: "running"}
         elif "Fan Speed" in name:
@@ -398,6 +403,7 @@ def _extract_ventilation(
                 ENT_OPTIONS: _enum_map(control),
                 ENT_STATE_CLASS: None,
                 ENT_UNIT: None,
+                ENT_ICON: "mdi:fan",
             }
         elif "Error Code" in name:
             entities[obj] = {
@@ -408,4 +414,5 @@ def _extract_ventilation(
                 ENT_STATE_CLASS: None,
                 ENT_UNIT: None,
                 ENT_DIAGNOSTIC: True,
+                ENT_ICON: "mdi:alert-circle-outline",
             }
