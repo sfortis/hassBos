@@ -8,6 +8,9 @@ DOMAIN = "comfortclick_bos"
 CONF_BASE_URL = "base_url"
 CONF_ENTITIES = "entities"
 
+# Options
+CONF_POLLING = "polling"  # bool: run the live GetClientData poll (default True)
+
 # Discovered entity kinds.
 KIND_DIMMER = "dimmer"
 KIND_SWITCH = "switch"

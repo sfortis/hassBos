@@ -63,5 +63,18 @@
       "no_lights": "No entities were discovered.",
       "unknown": "Unexpected error during re-scan."
     }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "ComfortClick bOS options",
+        "data": {
+          "polling": "Enable live polling"
+        },
+        "data_description": {
+          "polling": "Poll the gateway every few seconds for state changes. Turn off to reduce load on the gateway; entities then update only from your commands (optimistic) or a manual refresh (homeassistant.update_entity)."
+        }
+      }
+    }
   }
 }

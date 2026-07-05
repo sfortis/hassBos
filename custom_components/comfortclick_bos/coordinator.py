@@ -32,12 +32,16 @@ class BosCoordinator(DataUpdateCoordinator[dict[str, object]]):
         client: BosClient,
         panel_paths: set[str],
         form_objs: set[str] | None = None,
+        polling: bool = True,
     ) -> None:
+        # update_interval None -> the coordinator seeds once (first refresh) but
+        # does not auto-poll; state then comes from optimistic writes and manual
+        # refreshes (homeassistant.update_entity).
         super().__init__(
             hass,
             _LOGGER,
             name=DOMAIN,
-            update_interval=timedelta(seconds=SCAN_INTERVAL),
+            update_interval=timedelta(seconds=SCAN_INTERVAL) if polling else None,
         )
         self.client = client
         self._panel_paths = set(panel_paths)

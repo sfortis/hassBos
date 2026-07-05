@@ -15,6 +15,7 @@ from .api import BosAuthError, BosClient, BosConnectionError
 from .const import (
     CONF_BASE_URL,
     CONF_ENTITIES,
+    CONF_POLLING,
     DOMAIN,
     ENT_FORM,
     ENT_OBJECT,
@@ -68,18 +69,25 @@ async def async_setup_entry(hass: HomeAssistant, entry: BosConfigEntry) -> bool:
         item[ENT_PANEL_PATH] for item in configured if item.get(ENT_PANEL_PATH)
     }
     form_objs = {item[ENT_FORM] for item in configured if item.get(ENT_FORM)}
-    coordinator = BosCoordinator(hass, client, panel_paths, form_objs)
+    polling = entry.options.get(CONF_POLLING, True)
+    coordinator = BosCoordinator(hass, client, panel_paths, form_objs, polling)
     await coordinator.async_config_entry_first_refresh()
 
     entry.runtime_data = coordinator
     _cleanup_stale(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    entry.async_on_unload(entry.add_update_listener(_async_options_updated))
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: BosConfigEntry) -> bool:
     """Unload a config entry."""
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def _async_options_updated(hass: HomeAssistant, entry: BosConfigEntry) -> None:
+    """Reload when options (e.g. the polling toggle) change."""
+    await hass.config_entries.async_reload(entry.entry_id)
 
 
 async def async_remove_config_entry_device(

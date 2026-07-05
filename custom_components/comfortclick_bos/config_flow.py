@@ -14,10 +14,13 @@ import voluptuous as vol
 
 from homeassistant.config_entries import (
     SOURCE_RECONFIGURE,
+    ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
+    OptionsFlow,
 )
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
+from homeassistant.core import callback
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.aiohttp_client import async_create_clientsession
 from homeassistant.helpers.selector import (
@@ -31,6 +34,7 @@ from .api import BosAuthError, BosClient, BosConnectionError
 from .const import (
     CONF_BASE_URL,
     CONF_ENTITIES,
+    CONF_POLLING,
     DEFAULT_BASE_URL,
     DOMAIN,
     ENT_KIND,
@@ -62,6 +66,11 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle the config flow."""
 
     VERSION = 2
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> BosOptionsFlow:
+        return BosOptionsFlow()
 
     def __init__(self) -> None:
         self._creds: dict[str, Any] = {}
@@ -274,3 +283,20 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._get_reconfigure_entry(), title=title, data=data
             )
         return self.async_create_entry(title=title, data=data)
+
+
+class BosOptionsFlow(OptionsFlow):
+    """Options: toggle the live polling of the gateway."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(data=user_input)
+        current = self.config_entry.options.get(CONF_POLLING, True)
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {vol.Required(CONF_POLLING, default=current): bool}
+            ),
+        )
