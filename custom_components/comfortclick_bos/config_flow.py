@@ -268,10 +268,9 @@ class ComfortClickBosConfigFlow(ConfigFlow, domain=DOMAIN):
     def _finish(self) -> ConfigFlowResult:
         items = list(self._selected.values())
         data = {**self._creds, CONF_ENTITIES: items}
+        title = "ComfortClick bOS"
         if self.source == SOURCE_RECONFIGURE:
             return self.async_update_reload_and_abort(
-                self._get_reconfigure_entry(), data=data
+                self._get_reconfigure_entry(), title=title, data=data
             )
-        return self.async_create_entry(
-            title=f"ComfortClick bOS ({len(items)} entities)", data=data
-        )
+        return self.async_create_entry(title=title, data=data)
