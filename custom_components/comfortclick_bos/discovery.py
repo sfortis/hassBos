@@ -23,6 +23,7 @@ from .api import BosClient, BosError
 from .const import (
     ENT_DEVICE_CLASS,
     ENT_DIAGNOSTIC,
+    ENT_ICON,
     ENT_FAN,
     ENT_FAN_MAP,
     ENT_FORM,
@@ -121,19 +122,22 @@ def _enum_map(control: dict) -> dict[str, str]:
     return result
 
 
-def _aqm_class(name: str, unit: str | None) -> tuple[str | None, str | None]:
+def _aqm_class(name: str, unit: str | None) -> tuple[str | None, str | None, str | None]:
+    """(device_class, unit, icon) for an air-quality reading, keyed by name."""
     low = name.lower()
     if "co2" in low:
-        return "carbon_dioxide", "ppm"
+        return "carbon_dioxide", "ppm", None
     if "pm2" in low:
-        return "pm25", unit or "µg/m³"
+        return "pm25", unit or "µg/m³", None
     if "pm10" in low:
-        return "pm10", unit or "µg/m³"
+        return "pm10", unit or "µg/m³", None
     if "pm1" in low:
-        return "pm1", unit or "µg/m³"
+        return "pm1", unit or "µg/m³", None
     if "voc" in low:
-        return None, unit or None
-    return _UNIT_MAP.get(unit or "", (None, unit or None))
+        # No standard device_class/unit (it is an index), so give it an icon.
+        return None, unit or None, "mdi:chemical-weapon"
+    device_class, mapped_unit = _UNIT_MAP.get(unit or "", (None, unit or None))
+    return device_class, mapped_unit, None
 
 
 def _classify(control: dict) -> tuple[str, dict] | None:
@@ -288,7 +292,7 @@ def _extract_air_quality(
         ):
             continue
         name = obj.split("\\")[-1]
-        device_class, unit = _aqm_class(name, control.get("Unit"))
+        device_class, unit, icon = _aqm_class(name, control.get("Unit"))
         entities[obj] = {
             ENT_OBJECT: obj,
             ENT_NAME: name,
@@ -298,6 +302,7 @@ def _extract_air_quality(
             ENT_UNIT: unit,
             ENT_DEVICE_CLASS: device_class,
             ENT_STATE_CLASS: "measurement",
+            ENT_ICON: icon,
             ENT_FORM: form_obj,
         }
 

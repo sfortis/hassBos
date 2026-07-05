@@ -15,6 +15,7 @@ from . import BosConfigEntry, entities_from_entry
 from .const import (
     ENT_DEVICE_CLASS,
     ENT_DIAGNOSTIC,
+    ENT_ICON,
     ENT_KIND,
     ENT_OPTIONS,
     ENT_STATE_CLASS,
@@ -46,6 +47,8 @@ class BosSensor(BosEntity, SensorEntity):
         self._options: dict[str, str] = item.get(ENT_OPTIONS) or {}
         if item.get(ENT_DIAGNOSTIC):
             self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        if item.get(ENT_ICON):
+            self._attr_icon = item[ENT_ICON]
 
         if self._options:
             # Enum sensor: value is one of a fixed set of texts.

@@ -45,6 +45,7 @@ ENT_FAN_MAP = "fan_map"  # {bOS index (str): bOS text} e.g. "2" -> "MED"
 # Select / enum-sensor keys.
 ENT_OPTIONS = "options"  # {bOS index (str): text} for select or enum sensor
 ENT_DIAGNOSTIC = "diagnostic"  # bool: place entity in the diagnostic category
+ENT_ICON = "icon"  # optional MDI icon override (e.g. VOC has no device_class)
 
 # Gateway host prefix only. The user appends their project (AccessID) and enters
 # the full base URL in the config flow, e.g. "<gateway>/<AccessID>".
