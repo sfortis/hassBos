@@ -94,6 +94,18 @@ def _object_name(control: dict) -> str | None:
     return (control.get("ObjectValue") or {}).get("ObjectName") or None
 
 
+def _map_unit(unit: str | None) -> tuple[str | None, str | None]:
+    """(device_class, HA unit) for a raw bOS unit, matched case-insensitively."""
+    raw = (unit or "").strip()
+    if raw in _UNIT_MAP:
+        return _UNIT_MAP[raw]
+    low = raw.lower()
+    for key, value in _UNIT_MAP.items():
+        if key.lower() == low:
+            return value
+    return None, raw or None
+
+
 def _has_lamp_icon(control: dict) -> bool:
     icon = (control.get("Image") or {}).get("ObjectName", "") or ""
     fore = (control.get("StatusBarForeColor") or {}).get("ObjectName", "")
@@ -136,7 +148,7 @@ def _aqm_class(name: str, unit: str | None) -> tuple[str | None, str | None, str
     if "voc" in low:
         # No standard device_class/unit (it is an index), so give it an icon.
         return None, unit or None, "mdi:chemical-weapon"
-    device_class, mapped_unit = _UNIT_MAP.get(unit or "", (None, unit or None))
+    device_class, mapped_unit = _map_unit(unit)
     return device_class, mapped_unit, None
 
 
@@ -160,9 +172,7 @@ def _classify(control: dict) -> tuple[str, dict] | None:
             return KIND_SWITCH, {}
         return None
     if ui in ("BOSTheme.Controls.DoubleControl", "BOSTheme.Controls.IntegerControl"):
-        device_class, unit = _UNIT_MAP.get(
-            control.get("Unit") or "", (None, control.get("Unit") or None)
-        )
+        device_class, unit = _map_unit(control.get("Unit"))
         return KIND_SENSOR, {
             ENT_UNIT: unit,
             ENT_DEVICE_CLASS: device_class,
