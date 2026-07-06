@@ -62,7 +62,7 @@ BOS_MAX = 100
 # (404). Do not raise this much.
 SCAN_INTERVAL = 2
 
-# How often to refresh air-quality device forms (CO2/PM/VOC), in seconds. These
-# change slowly and are fetched separately via GetDeviceForm, so poll them on a
-# much slower cadence than the 2s live channel.
-FORM_SCAN_INTERVAL = 300
+# GetClientData only pushes updates for the session's last-opened panel. So each
+# poll we also re-read ONE panel/form in round-robin (like flipping through panels
+# the way the web client does), which keeps load flat (1 GetPanel + 1 GetClientData
+# per poll) instead of a burst. Each panel refreshes every (#targets * SCAN_INTERVAL).

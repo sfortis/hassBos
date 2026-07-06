@@ -1,12 +1,13 @@
 """Live-state coordinator for ComfortClick bOS.
 
-Polls GetClientData on a short interval (the mechanism the web client uses) and
-keeps a map of object path -> current raw value. GetClientData is incremental
-per session, so initial values are seeded from GetPanel.
+Keeps a map of object path -> current raw value. Two update sources per poll:
 
-Air-quality readings (CO2/PM/VOC) live behind device forms, not panels. They are
-seeded and then refreshed on a much slower cadence via GetDeviceForm, because
-they change slowly and do not need the 2s live channel.
+- GetClientData (fast): but its PropertyUpdates only cover the session's LAST-opened
+  panel, so alone it misses external changes on other panels.
+- One round-robin re-read: each poll we GetPanel (or GetDeviceForm) ONE target from
+  the rotation and absorb its ValueUpdates. GetPanel returns current values
+  regardless of subscription, so cycling through all panels reliably catches every
+  external change, at a flat cost of one extra request per poll (no bursts).
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import BosClient, BosError
-from .const import DOMAIN, FORM_SCAN_INTERVAL, SCAN_INTERVAL
+from .const import DOMAIN, SCAN_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,9 +35,8 @@ class BosCoordinator(DataUpdateCoordinator[dict[str, object]]):
         form_objs: set[str] | None = None,
         polling: bool = True,
     ) -> None:
-        # update_interval None -> the coordinator seeds once (first refresh) but
-        # does not auto-poll; state then comes from optimistic writes and manual
-        # refreshes (homeassistant.update_entity).
+        # update_interval None -> seed once (first refresh), no auto-poll; state
+        # then comes from optimistic writes and manual homeassistant.update_entity.
         super().__init__(
             hass,
             _LOGGER,
@@ -44,31 +44,27 @@ class BosCoordinator(DataUpdateCoordinator[dict[str, object]]):
             update_interval=timedelta(seconds=SCAN_INTERVAL) if polling else None,
         )
         self.client = client
-        self._panel_paths = set(panel_paths)
-        self._form_objs = set(form_objs or ())
+        # Round-robin targets: ("panel", path) and ("form", object).
+        self._targets: list[tuple[str, str]] = [
+            ("panel", p) for p in sorted(panel_paths)
+        ] + [("form", f) for f in sorted(form_objs or ())]
         self._values: dict[str, object] = {}
         self._seeded = False
-        # Refresh forms every Nth poll (slow cadence relative to the live channel).
-        self._form_every = max(1, FORM_SCAN_INTERVAL // SCAN_INTERVAL)
-        self._poll_count = 0
+        self._rr = 0
 
     def set_local(self, object_name: str, value: object) -> None:
-        """Optimistically record a value we just wrote and notify listeners.
-
-        The gateway echoes the change on the next poll; this updates the UI now
-        instead of waiting up to SCAN_INTERVAL.
-        """
+        """Optimistically record a value we just wrote and notify listeners."""
         self._values[object_name] = value
         self.async_set_updated_data(dict(self._values))
 
     async def _async_update_data(self) -> dict[str, object]:
         try:
             if not self._seeded:
-                await self._seed()
+                for kind, obj in self._targets:
+                    await self._read(kind, obj)
+                self._seeded = bool(self._values) or not self._targets
             else:
-                self._poll_count += 1
-                if self._form_objs and self._poll_count % self._form_every == 0:
-                    await self._refresh_forms()
+                await self._rotate_one()
             for update in await self.client.get_client_data():
                 if update.get("PropertyName") in ("Value", "Color"):
                     name = update.get("DeviceName")
@@ -79,38 +75,23 @@ class BosCoordinator(DataUpdateCoordinator[dict[str, object]]):
             raise UpdateFailed(str(err)) from err
         return dict(self._values)
 
-    async def _seed(self) -> None:
-        """Initial snapshot from panels + air-quality forms.
+    async def _rotate_one(self) -> None:
+        """Re-read the next panel/form in the rotation."""
+        if not self._targets:
+            return
+        kind, obj = self._targets[self._rr % len(self._targets)]
+        self._rr += 1
+        await self._read(kind, obj)
 
-        Marked done only if at least one read succeeded, so a transient failure
-        (e.g. a dropped connection) is retried on the next poll instead of
-        leaving entities stuck at unknown.
-        """
-        any_ok = False
-        for path in self._panel_paths:
-            try:
-                panel = await self.client.get_panel(path)
-            except BosError as err:
-                _LOGGER.debug("Seed of panel %r failed: %s", path, err)
-                continue
-            any_ok = True
-            self._absorb(panel.get("ThemeObject", {}) or {})
-        any_ok = await self._refresh_forms() or any_ok
-        if any_ok:
-            self._seeded = True
-
-    async def _refresh_forms(self) -> bool:
-        """Fetch air-quality device forms into the cache. Returns True if any read."""
-        any_ok = False
-        for form_obj in self._form_objs:
-            try:
-                form = await self.client.get_device_form(form_obj)
-            except BosError as err:
-                _LOGGER.debug("Form %r refresh failed: %s", form_obj, err)
-                continue
-            any_ok = True
-            self._absorb(form)
-        return any_ok
+    async def _read(self, kind: str, obj: str) -> None:
+        try:
+            if kind == "panel":
+                data = await self.client.get_panel(obj)
+                self._absorb(data.get("ThemeObject", {}) or {})
+            else:
+                self._absorb(await self.client.get_device_form(obj))
+        except BosError as err:
+            _LOGGER.debug("Re-read of %s %r failed: %s", kind, obj, err)
 
     def _absorb(self, panel_like: dict) -> None:
         """Copy a panel/form's ValueUpdates into the value cache."""
