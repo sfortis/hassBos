@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import BosConfigEntry, entities_from_entry
+from . import BosConfigEntry, coordinator_for, entities_from_entry
 from .api import BosError
 from .const import ENT_ICON, ENT_KIND, ENT_OPTIONS, KIND_SELECT
 from .entity import BosEntity
@@ -19,9 +19,8 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up select entities from the config entry."""
-    coordinator = entry.runtime_data
     async_add_entities(
-        BosSelect(coordinator, entry, item)
+        BosSelect(coordinator_for(entry, item), entry, item)
         for item in entities_from_entry(entry)
         if item.get(ENT_KIND) == KIND_SELECT
     )

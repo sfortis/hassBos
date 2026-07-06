@@ -15,7 +15,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import BosConfigEntry, entities_from_entry
+from . import BosConfigEntry, coordinator_for, entities_from_entry
 from .api import BosError
 from .const import (
     ENT_FAN,
@@ -72,9 +72,8 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up A/C climate entities from the config entry."""
-    coordinator = entry.runtime_data
     async_add_entities(
-        BosClimate(coordinator, entry, item)
+        BosClimate(coordinator_for(entry, item), entry, item)
         for item in entities_from_entry(entry)
         if item.get(ENT_KIND) == KIND_CLIMATE
     )

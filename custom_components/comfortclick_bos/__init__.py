@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
@@ -17,10 +18,10 @@ from .const import (
     CONF_ENTITIES,
     CONF_POLLING,
     DOMAIN,
-    ENT_FORM,
     ENT_OBJECT,
     ENT_PANEL,
     ENT_PANEL_PATH,
+    MAX_LIVE_SESSIONS,
 )
 from .coordinator import BosCoordinator
 
@@ -34,7 +35,28 @@ PLATFORMS: list[Platform] = [
     Platform.SENSOR,
 ]
 
-type BosConfigEntry = ConfigEntry[BosCoordinator]
+
+@dataclass
+class BosRuntime:
+    """Per-entry runtime: one coordinator/session per floor panel."""
+
+    # panel_path -> coordinator that owns it.
+    by_panel: dict[str, BosCoordinator]
+    # Distinct coordinators (for first refresh / iteration).
+    coordinators: list[BosCoordinator]
+    # Clients whose sessions we must close on unload.
+    clients: list[BosClient] = field(default_factory=list)
+
+    def for_item(self, item: dict) -> BosCoordinator:
+        """Coordinator that carries this entity's live value."""
+        coord = self.by_panel.get(item.get(ENT_PANEL_PATH))
+        if coord is not None:
+            return coord
+        # Defensive fallback (should not happen: every item has a mapped panel).
+        return self.coordinators[0]
+
+
+type BosConfigEntry = ConfigEntry[BosRuntime]
 
 
 def _device_id(base: str, panel: str | None) -> tuple[str, str]:
@@ -46,39 +68,68 @@ def entities_from_entry(entry: ConfigEntry) -> list[dict]:
     return entry.data.get(CONF_ENTITIES, [])
 
 
+def coordinator_for(entry: BosConfigEntry, item: dict) -> BosCoordinator:
+    """Resolve the coordinator that owns a given entity's panel."""
+    return entry.runtime_data.for_item(item)
+
+
+async def _close_all(clients: list[BosClient]) -> None:
+    for client in clients:
+        await client.close()
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: BosConfigEntry) -> bool:
     """Set up ComfortClick bOS from a config entry."""
-    # A dedicated session gives us an isolated cookie jar for the JWT Token.
-    session = async_create_clientsession(hass)
-    client = BosClient(
-        session,
-        entry.data[CONF_BASE_URL],
-        entry.data[CONF_USERNAME],
-        entry.data[CONF_PASSWORD],
+    configured = entities_from_entry(entry)
+    panels = sorted(
+        {item[ENT_PANEL_PATH] for item in configured if item.get(ENT_PANEL_PATH)}
     )
+    polling = entry.options.get(CONF_POLLING, True)
+
+    # First MAX_LIVE_SESSIONS panels get a dedicated live session; any extras share
+    # one fallback session that round-robins across them. Empty -> a single session
+    # with no panels (still validates credentials).
+    groups: list[list[str]] = [[p] for p in panels[:MAX_LIVE_SESSIONS]]
+    overflow = panels[MAX_LIVE_SESSIONS:]
+    if overflow:
+        groups.append(overflow)
+    if not groups:
+        groups = [[]]
+
+    clients: list[BosClient] = []
+    coordinators: list[BosCoordinator] = []
+    by_panel: dict[str, BosCoordinator] = {}
 
     try:
-        await client.login()
+        for group in groups:
+            # A dedicated session per coordinator = an isolated cookie jar for its
+            # JWT Token, so each panel's GetClientData subscription stays separate.
+            client = BosClient(
+                async_create_clientsession(hass),
+                entry.data[CONF_BASE_URL],
+                entry.data[CONF_USERNAME],
+                entry.data[CONF_PASSWORD],
+            )
+            await client.login()
+            clients.append(client)
+            coordinator = BosCoordinator(hass, client, group, polling)
+            coordinators.append(coordinator)
+            for path in group:
+                by_panel[path] = coordinator
+
+        for coordinator in coordinators:
+            await coordinator.async_config_entry_first_refresh()
     except BosAuthError as err:
+        await _close_all(clients)
         raise ConfigEntryAuthFailed(str(err)) from err
     except BosConnectionError as err:
+        await _close_all(clients)
         raise ConfigEntryNotReady(str(err)) from err
+    except Exception:
+        await _close_all(clients)
+        raise
 
-    configured = entities_from_entry(entry)
-    # A panel re-read is only useful for entities whose value lives ON the panel
-    # (lights/switches). Form-based entities (sensors/climate/select) get their
-    # values from GetDeviceForm, so their panel would be re-read for nothing.
-    panel_paths = {
-        item[ENT_PANEL_PATH]
-        for item in configured
-        if item.get(ENT_PANEL_PATH) and not item.get(ENT_FORM)
-    }
-    form_objs = {item[ENT_FORM] for item in configured if item.get(ENT_FORM)}
-    polling = entry.options.get(CONF_POLLING, True)
-    coordinator = BosCoordinator(hass, client, panel_paths, form_objs, polling)
-    await coordinator.async_config_entry_first_refresh()
-
-    entry.runtime_data = coordinator
+    entry.runtime_data = BosRuntime(by_panel, coordinators, clients)
     _cleanup_stale(hass, entry)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_options_updated))
@@ -86,8 +137,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: BosConfigEntry) -> bool:
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: BosConfigEntry) -> bool:
-    """Unload a config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    """Unload a config entry and close its sessions."""
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        await _close_all(entry.runtime_data.clients)
+    return unloaded
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: BosConfigEntry) -> None:

@@ -16,7 +16,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import BosConfigEntry, entities_from_entry
+from . import BosConfigEntry, coordinator_for, entities_from_entry
 from .api import BosError
 from .const import (
     BOS_MAX,
@@ -58,10 +58,10 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the light entities (dimmer + on/off) from the config entry."""
-    coordinator = entry.runtime_data
     entities: list[BosEntity] = []
     for item in entities_from_entry(entry):
         kind = item.get(ENT_KIND)
+        coordinator = coordinator_for(entry, item)
         if kind == KIND_DIMMER:
             entities.append(BosDimmerLight(coordinator, entry, item))
         elif kind == KIND_SWITCH:

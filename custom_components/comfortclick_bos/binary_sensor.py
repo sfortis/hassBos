@@ -9,7 +9,7 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import BosConfigEntry, entities_from_entry
+from . import BosConfigEntry, coordinator_for, entities_from_entry
 from .const import ENT_DEVICE_CLASS, ENT_KIND, KIND_BINARY
 from .entity import BosEntity
 
@@ -20,9 +20,8 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up binary sensors from the config entry."""
-    coordinator = entry.runtime_data
     async_add_entities(
-        BosBinarySensor(coordinator, entry, item)
+        BosBinarySensor(coordinator_for(entry, item), entry, item)
         for item in entities_from_entry(entry)
         if item.get(ENT_KIND) == KIND_BINARY
     )

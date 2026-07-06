@@ -62,7 +62,20 @@ BOS_MAX = 100
 # (404). Do not raise this much.
 SCAN_INTERVAL = 2
 
-# GetClientData only pushes updates for the session's last-opened panel. So each
-# poll we also re-read ONE panel/form in round-robin (like flipping through panels
-# the way the web client does), which keeps load flat (1 GetPanel + 1 GetClientData
-# per poll) instead of a burst. Each panel refreshes every (#targets * SCAN_INTERVAL).
+# GetClientData only pushes updates for the session's LAST-opened panel. A single
+# GetPanel(floor path) both seeds every value on that floor (lights, A/C, AQM, ERV)
+# and subscribes the session's GetClientData to it. So we give each floor panel its
+# OWN session/coordinator (like opening N official web clients in N windows): seed
+# once with GetPanel, then just poll GetClientData for live changes. No round-robin
+# and no GetDeviceForm at runtime.
+#
+# To bound load on the gateway (and stay under any session/license limit), only the
+# first MAX_LIVE_SESSIONS panels get a dedicated live session; any extra panels share
+# one fallback session that round-robins GetPanel across them (older behaviour).
+MAX_LIVE_SESSIONS = 4
+
+# A live single-panel session re-reads its panel every RESYNC_EVERY polls. This is a
+# safety net: a re-login (e.g. after a GetClientData 404) opens a fresh session that
+# has not opened any panel, so its GetClientData would return nothing until the panel
+# is re-opened. Re-reading periodically re-subscribes and reconciles any missed push.
+RESYNC_EVERY = 15  # polls (~30s at SCAN_INTERVAL=2)

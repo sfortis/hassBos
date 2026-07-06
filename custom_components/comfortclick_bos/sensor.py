@@ -11,7 +11,7 @@ from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import BosConfigEntry, entities_from_entry
+from . import BosConfigEntry, coordinator_for, entities_from_entry
 from .const import (
     ENT_DEVICE_CLASS,
     ENT_DIAGNOSTIC,
@@ -31,9 +31,8 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up numeric and enum sensors from the config entry."""
-    coordinator = entry.runtime_data
     async_add_entities(
-        BosSensor(coordinator, entry, item)
+        BosSensor(coordinator_for(entry, item), entry, item)
         for item in entities_from_entry(entry)
         if item.get(ENT_KIND) == KIND_SENSOR
     )

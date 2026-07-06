@@ -57,6 +57,10 @@ class BosClient:
         self._base = base_url.rstrip("/")
         self._username = username
         self._password = password
+        # Bumped on every successful login. A coordinator watches this to detect a
+        # re-login (its session then has no open panel, so GetClientData is silent
+        # until a panel is re-opened) and re-subscribe immediately.
+        self._login_gen = 0
         # Origin is the gateway host without the project path segment.
         parts = self._base.split("/", 3)
         self._origin = "/".join(parts[:3]) if len(parts) >= 3 else self._base
@@ -84,6 +88,10 @@ class BosClient:
             "Connection": "keep-alive",
         }
 
+    async def close(self) -> None:
+        """Close the underlying HTTP session (each coordinator owns one)."""
+        await self._session.close()
+
     async def login(self) -> dict:
         """Establish a session. Raises BosAuthError / BosConnectionError."""
         body = {
@@ -97,8 +105,14 @@ class BosClient:
         data = await self._request("POST", "/Login", json=body)
         if data.get("Status") != "OK":
             raise BosAuthError(f"Login failed: {data.get('Status')!r}")
-        _LOGGER.debug("bOS login OK for %s", self._username)
+        self._login_gen += 1
+        _LOGGER.debug("bOS login OK for %s (gen %d)", self._username, self._login_gen)
         return data
+
+    @property
+    def login_generation(self) -> int:
+        """Increments on each successful login; lets a coordinator spot a re-login."""
+        return self._login_gen
 
     async def set_value(
         self, object_name: str, value: str | int, value_name: str = "Value"
