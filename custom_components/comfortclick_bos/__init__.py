@@ -65,8 +65,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: BosConfigEntry) -> bool:
         raise ConfigEntryNotReady(str(err)) from err
 
     configured = entities_from_entry(entry)
+    # A panel re-read is only useful for entities whose value lives ON the panel
+    # (lights/switches). Form-based entities (sensors/climate/select) get their
+    # values from GetDeviceForm, so their panel would be re-read for nothing.
     panel_paths = {
-        item[ENT_PANEL_PATH] for item in configured if item.get(ENT_PANEL_PATH)
+        item[ENT_PANEL_PATH]
+        for item in configured
+        if item.get(ENT_PANEL_PATH) and not item.get(ENT_FORM)
     }
     form_objs = {item[ENT_FORM] for item in configured if item.get(ENT_FORM)}
     polling = entry.options.get(CONF_POLLING, True)
