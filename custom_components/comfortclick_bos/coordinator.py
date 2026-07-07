@@ -24,7 +24,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import BosClient, BosError
-from .const import DOMAIN, RESYNC_EVERY, SCAN_INTERVAL
+from .const import DOMAIN, MAX_TOLERATED_FAILURES, RESYNC_EVERY, SCAN_INTERVAL
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -54,6 +54,7 @@ class BosCoordinator(DataUpdateCoordinator[dict[str, object]]):
         self._rr = 0
         self._polls = 0
         self._seen_login_gen = 0
+        self._fail_streak = 0
 
     def set_local(self, object_name: str, value: object) -> None:
         """Optimistically record a value we just wrote and notify listeners."""
@@ -84,8 +85,21 @@ class BosCoordinator(DataUpdateCoordinator[dict[str, object]]):
                 for path in self._panels:
                     await self._read_panel(path)
         except BosError as err:
-            # Any transport/auth/protocol error -> transient; keep last data.
+            # The gateway blips often (LB 404 / dropped socket). Tolerate a short
+            # streak of failures, keeping the last known values so entities do not
+            # flap to "unavailable"; only surface a sustained outage. During the
+            # initial seed (not yet seeded) we still fail fast -> ConfigEntryNotReady.
+            self._fail_streak += 1
+            if self._seeded and self._fail_streak <= MAX_TOLERATED_FAILURES:
+                _LOGGER.debug(
+                    "Transient poll failure %d/%d, keeping last data: %s",
+                    self._fail_streak,
+                    MAX_TOLERATED_FAILURES,
+                    err,
+                )
+                return dict(self._values)
             raise UpdateFailed(str(err)) from err
+        self._fail_streak = 0
         return dict(self._values)
 
     async def _refresh_panels(self) -> None:

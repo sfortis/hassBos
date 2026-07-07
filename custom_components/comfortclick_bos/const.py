@@ -79,3 +79,10 @@ MAX_LIVE_SESSIONS = 4
 # has not opened any panel, so its GetClientData would return nothing until the panel
 # is re-opened. Re-reading periodically re-subscribes and reconciles any missed push.
 RESYNC_EVERY = 15  # polls (~30s at SCAN_INTERVAL=2)
+
+# The gateway has frequent transient hiccups (LB 404 / dropped keep-alive). Rather than
+# flip every entity to "unavailable" on a single failed poll, tolerate this many
+# CONSECUTIVE failures - keeping the last known values - before giving up. At
+# SCAN_INTERVAL=2 this is a ~10s grace window that smooths over brief blips while still
+# surfacing a real, sustained outage.
+MAX_TOLERATED_FAILURES = 5

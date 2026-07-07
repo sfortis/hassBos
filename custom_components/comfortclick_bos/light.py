@@ -8,7 +8,7 @@ from typing import Any
 
 from homeassistant.components.light import (
     ATTR_BRIGHTNESS,
-    ATTR_RGB_COLOR,
+    ATTR_RGBW_COLOR,
     ColorMode,
     LightEntity,
 )
@@ -142,10 +142,16 @@ class BosSwitchLight(_BosLightBase):
 
 
 class BosRgbLight(_BosLightBase):
-    """An RGB(W) light: a Color object {A,R,G,B} where A is brightness."""
+    """An RGBW light: a Color object {A,R,G,B} where A is the white channel and
+    the R/G/B magnitude carries brightness (verified from HAR: proportional RGB
+    scaling dims, A drives a separate white LED). Modeled as ColorMode.RGBW.
 
-    _attr_color_mode = ColorMode.RGB
-    _attr_supported_color_modes = {ColorMode.RGB}
+    The strip has no separate power object (the nearby "Group ON/OFF" is a blink
+    command, not power), so on/off is simply "any channel lit".
+    """
+
+    _attr_color_mode = ColorMode.RGBW
+    _attr_supported_color_modes = {ColorMode.RGBW}
 
     @property
     def _color(self) -> dict:
@@ -159,44 +165,60 @@ class BosRgbLight(_BosLightBase):
                 return {}
         return {}
 
+    def _channels(self) -> tuple[int, int, int, int]:
+        """Raw (R, G, B, W) with W = the bOS Color 'A' (white) slot, clamped."""
+        color = self._color
+
+        def _chan(key: str) -> int:
+            try:
+                return max(0, min(255, int(color.get(key, 0) or 0)))
+            except (TypeError, ValueError):
+                return 0
+
+        return _chan("R"), _chan("G"), _chan("B"), _chan("A")
+
     @property
     def is_on(self) -> bool | None:
-        alpha = self._color.get("A")
-        return None if alpha is None else alpha > 0
+        if not self._color:
+            return None
+        return any(self._channels())
 
     @property
     def brightness(self) -> int | None:
-        alpha = self._color.get("A")
-        return int(alpha) if alpha else None
+        level = max(self._channels())
+        return level or None
 
     @property
-    def rgb_color(self) -> tuple[int, int, int] | None:
-        color = self._color
-        if not color:
+    def rgbw_color(self) -> tuple[int, int, int, int] | None:
+        red, green, blue, white = self._channels()
+        level = max(red, green, blue, white)
+        if not level:
             return None
-        return int(color.get("R", 0)), int(color.get("G", 0)), int(color.get("B", 0))
+        # Report the colour at full brightness; HA scales it by `brightness`.
+        return tuple(min(255, round(c * HA_MAX / level)) for c in (red, green, blue, white))
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        color = self._color
-        red, green, blue = color.get("R", 255), color.get("G", 255), color.get("B", 255)
-        alpha = color.get("A") or HA_MAX
-        if ATTR_RGB_COLOR in kwargs:
-            red, green, blue = kwargs[ATTR_RGB_COLOR]
-        if ATTR_BRIGHTNESS in kwargs:
-            alpha = kwargs[ATTR_BRIGHTNESS]
-        # Avoid turning "on" to black when the stored color is all-zero.
-        if not any((red, green, blue)):
-            red = green = blue = 255
-        await self._write_color(int(red), int(green), int(blue), max(int(alpha), 1))
+        red, green, blue, white = self._channels()
+        level = max(red, green, blue, white)
+        # Current colour scaled up to full; default to plain white if nothing set.
+        if level:
+            full = tuple(round(c * HA_MAX / level) for c in (red, green, blue, white))
+        else:
+            full = (HA_MAX, HA_MAX, HA_MAX, 0)
+        if ATTR_RGBW_COLOR in kwargs:
+            full = tuple(int(c) for c in kwargs[ATTR_RGBW_COLOR])
+        brightness = kwargs.get(ATTR_BRIGHTNESS, level or HA_MAX)
+        red, green, blue, white = (round(c * brightness / HA_MAX) for c in full)
+        # Never turn "on" to fully black.
+        if not any((red, green, blue, white)):
+            red = green = blue = white = brightness or HA_MAX
+        await self._write_color(red, green, blue, white)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        color = self._color
-        await self._write_color(
-            int(color.get("R", 0)), int(color.get("G", 0)), int(color.get("B", 0)), 0
-        )
+        await self._write_color(0, 0, 0, 0)
 
-    async def _write_color(self, red: int, green: int, blue: int, alpha: int) -> None:
-        payload = {"ObjectName": "", "Error": False, "A": alpha, "R": red, "G": green, "B": blue}
+    async def _write_color(self, red: int, green: int, blue: int, white: int) -> None:
+        payload = {"ObjectName": "", "Error": False, "A": white, "R": red, "G": green, "B": blue}
         try:
             await self.coordinator.client.set_value(
                 self._object, json.dumps(payload), value_name="Color"

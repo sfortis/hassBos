@@ -10,6 +10,7 @@ read the same way the web client does, by polling GetClientData.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 
@@ -221,6 +222,9 @@ class BosClient:
                 # covers DNS/socket failures. All are transient connectivity.
                 last_err = err
                 if attempt == 1:
+                    # Brief pause before the retry: the retry opens a fresh
+                    # connection, and a short gap lets a momentary LB blip clear.
                     _LOGGER.debug("%s attempt 1 failed (%s); retrying", endpoint, err)
+                    await asyncio.sleep(0.4)
                     continue
         raise BosConnectionError(str(last_err)) from last_err
